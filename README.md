@@ -16,3 +16,4 @@ Infrastructure setup in progress. Application code will be added in a subsequent
 - Next.js
 - PostgreSQL (Railway)
 - NextAuth.js
+
