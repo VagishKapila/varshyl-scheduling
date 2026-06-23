@@ -128,6 +128,7 @@ export function generateScheduleFromTemplate(
 
   for (let i = 0; i < sorted.length; i++) {
     const t = sorted[i]
+    const dur = t.defaultDurationDays || 1
     let startDate = new Date(projectStart)
     let predResult: any = null
 
@@ -141,6 +142,21 @@ export function generateScheduleFromTemplate(
         startDate = addWorkingDays(predResult.finishDate, t.lagDays || 0, saturdayWork)
       } else if (t.relationshipType === 'SS') {
         startDate = addWorkingDays(predResult.startDate, t.lagDays || 0, saturdayWork)
+      } else if (t.relationshipType === 'FF') {
+        const finishTarget = addWorkingDays(predResult.finishDate, t.lagDays || 0, saturdayWork)
+        if (t.isMilestone) {
+          startDate = finishTarget
+        } else {
+          let d = new Date(finishTarget)
+          let rem = dur - 1
+          while (rem > 0) {
+            d = addDays(d, -1)
+            if (isSunday(d)) continue
+            if (isSaturday(d) && !saturdayWork) continue
+            rem--
+          }
+          startDate = d
+        }
       } else {
         startDate = new Date(predResult.finishDate)
       }
@@ -148,7 +164,6 @@ export function generateScheduleFromTemplate(
 
     startDate = nextWorkingDay(startDate, saturdayWork)
 
-    const dur = t.defaultDurationDays || 1
     const finishDate = t.isMilestone ? startDate : addWorkingDays(startDate, dur - 1, saturdayWork)
 
     const item = {

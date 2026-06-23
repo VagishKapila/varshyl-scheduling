@@ -62,6 +62,7 @@ export default function TemplatePage() {
         body: JSON.stringify({
           templateId: template.id,
           selectedTaskIds: Array.from(selected),
+          taskDurations: durations,
           revisionName: 'Rev 1',
         }),
       })

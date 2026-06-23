@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { autoColor } from '@/lib/scheduling'
+import { autoColor, addWorkingDays } from '@/lib/scheduling'
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   try {
@@ -25,10 +25,22 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const body = await req.json()
     const { name, durationDays, startDate, level, sortOrder } = body
     if (!name || !startDate) return NextResponse.json({ error: 'Name and start date required' }, { status: 400 })
+    const revision = await prisma.scheduleRevision.findUnique({
+      where: { id: params.id },
+      include: { project: true },
+    })
+    if (!revision) return NextResponse.json({ error: 'Revision not found' }, { status: 404 })
+
+    const maxSort = await prisma.scheduleTask.aggregate({
+      where: { revisionId: params.id },
+      _max: { sortOrder: true },
+    })
+
     const dur = Number(durationDays) || 1
     const start = new Date(startDate)
-    const finish = new Date(start)
-    finish.setDate(finish.getDate() + dur - 1)
+    const finish = body.isMilestone
+      ? start
+      : addWorkingDays(start, dur - 1, revision.project.saturdayWork)
     const task = await prisma.scheduleTask.create({
       data: {
         revisionId: params.id,
@@ -37,7 +49,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         startDate: start,
         finishDate: finish,
         level: level || 1,
-        sortOrder: sortOrder || 999,
+        sortOrder: sortOrder ?? ((maxSort._max.sortOrder ?? 0) + 1),
         color: body.color || autoColor(name),
         responsibleParty: body.responsibleParty || null,
         notes: body.notes || null,

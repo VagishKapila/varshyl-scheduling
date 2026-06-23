@@ -2,7 +2,25 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { generateScheduleFromTemplate, autoColor } from '@/lib/scheduling'
+import { generateScheduleFromTemplate, autoColor, recalculateDates } from '@/lib/scheduling'
+
+function expandWithPredecessors(selected: any[], allTasks: any[]) {
+  const byId = new Map(allTasks.map(t => [t.id, t]))
+  const included = new Set(selected.map(t => t.id))
+  const queue = [...selected]
+  while (queue.length) {
+    const task = queue.pop()!
+    const predId = task.predecessorTemplateTaskId
+    if (predId && !included.has(predId)) {
+      const pred = byId.get(predId)
+      if (pred) {
+        included.add(pred.id)
+        queue.push(pred)
+      }
+    }
+  }
+  return allTasks.filter(t => included.has(t.id))
+}
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
@@ -14,7 +32,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const project = await prisma.project.findFirst({ where: { id: params.id, companyId } })
     if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
 
-    const { templateId, selectedTaskIds, revisionName } = await req.json()
+    const { templateId, selectedTaskIds, revisionName, taskDurations } = await req.json()
 
     const template = await prisma.template.findUnique({
       where: { id: templateId },
@@ -27,16 +45,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       ? template.tasks.filter((t: any) => selectedTaskIds.includes(t.id))
       : [...template.tasks]
 
+    tasksToUse = expandWithPredecessors(tasksToUse, template.tasks)
+
     if (isNoPermit) tasksToUse = tasksToUse.filter((t: any) => !t.isPermitRelated)
 
     const adjustedTasks = tasksToUse.map((t: any) => ({
       ...t,
-      defaultDurationDays: t.isPermitRelated && project.permitDays > 0
-        ? project.permitDays
-        : t.defaultDurationDays,
+      defaultDurationDays: taskDurations?.[t.id] ?? (
+        t.isPermitRelated && project.permitDays > 0
+          ? project.permitDays
+          : t.defaultDurationDays
+      ),
     }))
 
-    // Mark existing revisions not current
     await prisma.scheduleRevision.updateMany({
       where: { projectId: project.id },
       data: { isCurrent: false },
@@ -53,7 +74,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     })
 
     const generatedTasks = generateScheduleFromTemplate(
-      adjustedTasks, project.startDate, project.saturdayWork
+      adjustedTasks,
+      new Date(project.startDate),
+      project.saturdayWork,
     ) as any[]
 
     const idMap = new Map<string, string>()
@@ -84,8 +107,35 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       insertedTasks.push(created)
     }
 
+    const recalculated = recalculateDates(
+      insertedTasks.map(t => ({
+        ...t,
+        startDate: new Date(t.startDate),
+        finishDate: new Date(t.finishDate),
+      })),
+      project.saturdayWork,
+    )
+
+    const finalTasks = []
+    for (const t of recalculated) {
+      const updated = await prisma.scheduleTask.update({
+        where: { id: t.id },
+        data: { startDate: t.startDate, finishDate: t.finishDate },
+      })
+      finalTasks.push(updated)
+    }
+
     await prisma.project.update({ where: { id: project.id }, data: { updatedAt: new Date() } })
-    return NextResponse.json({ data: { revision, tasks: insertedTasks } })
+
+    if (selectedTaskIds?.length && finalTasks.length < selectedTaskIds.length) {
+      console.warn(
+        `[POST generate-schedule] expected ${selectedTaskIds.length} tasks, created ${finalTasks.length}`,
+      )
+    }
+
+    return NextResponse.json({
+      data: { revision, tasks: finalTasks, taskCount: finalTasks.length },
+    })
   } catch (e: any) {
     console.error('[POST generate-schedule]', e.message)
     return NextResponse.json({ error: 'Failed to generate schedule' }, { status: 500 })

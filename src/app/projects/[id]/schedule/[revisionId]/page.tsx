@@ -2,16 +2,27 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { format, addDays, differenceInCalendarDays, startOfWeek, isSameDay } from 'date-fns'
+import { format, addDays, differenceInCalendarDays, startOfWeek, startOfMonth, startOfQuarter, startOfYear } from 'date-fns'
 
 const COLOR_MAP: Record<string, string> = {
   blue: '#2458ff', red: '#d71920', green: '#138a36',
   teal: '#168c9a', purple: '#7a3cff', black: '#111111',
 }
-const SCALE_DAYS: Record<string,number> = {
-  daily:1, weekly:7, '2-week':14, monthly:30, quarterly:90, yearly:365
+
+const SCALE_CONFIG: Record<string, {
+  colPx: number
+  stepDays: number
+  alignStart: (d: Date) => Date
+  formatLabel: (d: Date) => string
+  showBarLabels: boolean
+}> = {
+  daily: { colPx: 28, stepDays: 1, alignStart: d => d, formatLabel: d => format(d, 'EEE MMM d'), showBarLabels: true },
+  weekly: { colPx: 10, stepDays: 7, alignStart: startOfWeek, formatLabel: d => `Week of ${format(d, 'MMM d')}`, showBarLabels: true },
+  '2-week': { colPx: 6, stepDays: 14, alignStart: d => d, formatLabel: d => format(d, 'MMM d'), showBarLabels: false },
+  monthly: { colPx: 3, stepDays: 30, alignStart: startOfMonth, formatLabel: d => format(d, 'MMMM yyyy'), showBarLabels: false },
+  quarterly: { colPx: 2, stepDays: 90, alignStart: startOfQuarter, formatLabel: d => `Q${Math.floor(d.getMonth() / 3) + 1} ${format(d, 'yyyy')}`, showBarLabels: false },
+  yearly: { colPx: 1, stepDays: 365, alignStart: startOfYear, formatLabel: d => format(d, 'yyyy'), showBarLabels: false },
 }
-const COL_PX = 28 // pixels per day in gantt
 
 interface Task {
   id: string; sortOrder: number; level: number; name: string
@@ -35,18 +46,24 @@ export default function GanttPage() {
   const [selectedTask, setSelectedTask] = useState<Task|null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [showHoldModal, setShowHoldModal] = useState(false)
+  const [showAddTaskModal, setShowAddTaskModal] = useState(false)
   const [showRevisionModal, setShowRevisionModal] = useState(false)
   const [saving, setSaving] = useState(false)
 
+  async function loadRevision() {
+    const res = await fetch(`/api/revisions/${revisionId}`)
+    const d = await res.json()
+    setRevision(d.data)
+    setTasks((d.data?.tasks || []).sort((a: Task, b: Task) => a.sortOrder - b.sortOrder))
+    setLoading(false)
+  }
+
   useEffect(() => {
-    fetch(`/api/revisions/${revisionId}`)
-      .then(r => r.json())
-      .then(d => {
-        setRevision(d.data)
-        setTasks((d.data?.tasks || []).sort((a: Task, b: Task) => a.sortOrder - b.sortOrder))
-        setLoading(false)
-      })
+    loadRevision()
   }, [revisionId])
+
+  const scaleConfig = SCALE_CONFIG[scale] || SCALE_CONFIG.weekly
+  const COL_PX = scaleConfig.colPx
 
   const today = new Date()
   const minDate = tasks.length ? new Date(Math.min(...tasks.map(t => new Date(t.startDate).getTime()))) : today
@@ -59,10 +76,13 @@ export default function GanttPage() {
     return differenceInCalendarDays(new Date(date), ganttStart)
   }
 
-  // Build date header ticks
-  const weeks: Date[] = []
-  let cur = new Date(ganttStart)
-  while (cur <= ganttEnd) { weeks.push(new Date(cur)); cur = addDays(cur, 7) }
+  // Build date header ticks for current scale
+  const ticks: Date[] = []
+  let tickCur = scaleConfig.alignStart(new Date(ganttStart))
+  while (tickCur <= ganttEnd) {
+    ticks.push(new Date(tickCur))
+    tickCur = addDays(tickCur, scaleConfig.stepDays)
+  }
 
   async function updateTask(id: string, data: Partial<Task>) {
     await fetch(`/api/tasks/${id}`, {
@@ -118,7 +138,7 @@ export default function GanttPage() {
       <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-2 flex-wrap no-print sticky top-0 z-20">
         <Link href={`/projects/${projectId}`} className="text-gray-400 hover:text-gray-700 text-sm mr-2">← {project?.name}</Link>
         <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
-          {Object.keys(SCALE_DAYS).map(s => (
+          {Object.keys(SCALE_CONFIG).map(s => (
             <button key={s} onClick={() => setScale(s)}
               className={`px-2 py-1 text-xs rounded font-semibold capitalize transition-all ${scale===s ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
               {s}
@@ -126,6 +146,8 @@ export default function GanttPage() {
           ))}
         </div>
         <div className="ml-auto flex gap-2">
+          <button onClick={() => setShowAddTaskModal(true)}
+            className="px-3 py-1.5 text-xs font-semibold border border-orange-200 text-orange-600 rounded-lg hover:bg-orange-50">+ Add Task</button>
           <button onClick={() => setShowHoldModal(true)}
             className="px-3 py-1.5 text-xs font-semibold border border-red-200 text-red-600 rounded-lg hover:bg-red-50">+ Add Hold</button>
           <button onClick={() => setShowRevisionModal(true)}
@@ -170,9 +192,9 @@ export default function GanttPage() {
             </div>
             {/* Date ticks */}
             <div className="relative flex-1" style={{height:40}}>
-              {weeks.map((w, i) => (
-                <div key={i} className="absolute text-xs text-gray-400 font-medium" style={{left: dayOffset(w) * COL_PX + 2, top: 12}}>
-                  {format(w, 'MMM d')}
+              {ticks.map((tick, i) => (
+                <div key={`${scale}-${i}`} className="absolute text-xs text-gray-400 font-medium whitespace-nowrap" style={{left: dayOffset(tick) * COL_PX + 2, top: 12}}>
+                  {scaleConfig.formatLabel(tick)}
                 </div>
               ))}
               {/* Today line */}
@@ -214,10 +236,9 @@ export default function GanttPage() {
 
                 {/* Gantt bar */}
                 <div className="relative flex-1" style={{height:32}}>
-                  {/* Vertical grid lines */}
-                  {weeks.map((w, wi) => (
-                    <div key={wi} className="absolute top-0 bottom-0 w-px bg-gray-100"
-                      style={{left: dayOffset(w) * COL_PX}} />
+                  {ticks.map((tick, wi) => (
+                    <div key={`grid-${scale}-${wi}`} className="absolute top-0 bottom-0 w-px bg-gray-100"
+                      style={{left: dayOffset(tick) * COL_PX}} />
                   ))}
                   {/* Today line */}
                   <div className="absolute top-0 bottom-0 w-0.5" style={{left: dayOffset(today) * COL_PX, background:'#f15a24', opacity:0.4}} />
@@ -230,7 +251,7 @@ export default function GanttPage() {
                       transform: 'rotate(45deg)',
                     }} />
                   ) : (
-                    <div className={`absolute rounded ${isPhase ? '' : 'rounded'}`}
+                    <div className={`absolute rounded ${isPhase ? '' : 'rounded'} flex items-center overflow-hidden`}
                       style={{
                         left: startOff + 2,
                         top: isPhase ? 13 : 9,
@@ -238,7 +259,11 @@ export default function GanttPage() {
                         height: isPhase ? 6 : 14,
                         background: barColor,
                         opacity: task.isCritical ? 1 : 0.85,
-                      }} />
+                      }}>
+                      {scaleConfig.showBarLabels && barW >= 72 && !isPhase && (
+                        <span className="px-1 text-[10px] font-semibold text-white truncate">{task.name}</span>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
@@ -268,7 +293,13 @@ export default function GanttPage() {
       {showHoldModal && (
         <HoldModal revisionId={revisionId} tasks={tasks} project={project}
           onClose={() => setShowHoldModal(false)}
-          onAdded={() => { setShowHoldModal(false); window.location.reload() }} />
+          onAdded={() => { setShowHoldModal(false); loadRevision() }} />
+      )}
+
+      {showAddTaskModal && (
+        <AddTaskModal revisionId={revisionId} tasks={tasks}
+          onClose={() => setShowAddTaskModal(false)}
+          onAdded={() => { setShowAddTaskModal(false); loadRevision() }} />
       )}
 
       {/* Revision modal */}
@@ -384,6 +415,137 @@ function TaskDrawer({ task, tasks, onClose, onSave, onDelete }: {
           className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold">Cancel</button>
         <button onClick={() => { onSave(task.id, form); onClose() }}
           className="flex-1 px-3 py-2 rounded-lg text-white text-sm font-bold" style={{background:'#f15a24'}}>Save Changes</button>
+      </div>
+    </div>
+  )
+}
+
+// Add Task Modal
+function AddTaskModal({ revisionId, tasks, onClose, onAdded }: {
+  revisionId: string
+  tasks: Task[]
+  onClose: () => void
+  onAdded: () => void
+}) {
+  const [name, setName] = useState('')
+  const [durationDays, setDurationDays] = useState(5)
+  const [startDate, setStartDate] = useState(format(new Date(), 'yyyy-MM-dd'))
+  const [predecessorTaskId, setPredecessorTaskId] = useState('')
+  const [relationshipType, setRelationshipType] = useState('FS')
+  const [lagDays, setLagDays] = useState(0)
+  const [color, setColor] = useState('blue')
+  const [responsibleParty, setResponsibleParty] = useState('')
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!name.trim()) { setError('Task name is required'); return }
+    setError('')
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/revisions/${revisionId}/tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name.trim(),
+          durationDays,
+          startDate,
+          predecessorTaskId: predecessorTaskId || null,
+          relationshipType,
+          lagDays,
+          color,
+          responsibleParty: responsibleParty || null,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        console.error('[add task]', data.error)
+        setError(data.error || 'Failed to add task')
+        return
+      }
+      await fetch(`/api/revisions/${revisionId}/recalculate`, { method: 'POST' })
+      onAdded()
+    } catch (err) {
+      console.error('[add task]', err)
+      setError('Something went wrong')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-40 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-lg p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+        <h2 className="font-bold text-lg text-gray-900 mb-4">Add Task</h2>
+        <form onSubmit={submit} className="space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Task Name *</label>
+            <input value={name} onChange={e => setName(e.target.value)} required
+              className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm" placeholder="Install fixtures" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Duration (working days)</label>
+              <input type="number" min={1} value={durationDays} onChange={e => setDurationDays(Number(e.target.value))}
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Start Date</label>
+              <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Predecessor</label>
+            <select value={predecessorTaskId} onChange={e => setPredecessorTaskId(e.target.value)}
+              className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm">
+              <option value="">None</option>
+              {tasks.map(t => (
+                <option key={t.id} value={t.id}>{t.sortOrder}. {t.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Relationship</label>
+              <select value={relationshipType} onChange={e => setRelationshipType(e.target.value)}
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm">
+                {['FS', 'SS', 'FF'].map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Lag Days</label>
+              <input type="number" value={lagDays} onChange={e => setLagDays(Number(e.target.value))}
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Color</label>
+            <div className="flex gap-2">
+              {Object.entries(COLOR_MAP).map(([k, v]) => (
+                <button key={k} type="button" onClick={() => setColor(k)}
+                  className={`w-7 h-7 rounded-full transition-all ${color === k ? 'ring-2 ring-offset-2 ring-gray-400 scale-110' : ''}`}
+                  style={{ background: v }} />
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Responsible Party</label>
+            <input value={responsibleParty} onChange={e => setResponsibleParty(e.target.value)}
+              className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm" placeholder="GC, Electrical…" />
+          </div>
+          {error && <p className="text-sm text-red-600" role="alert">{error}</p>}
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 rounded-lg border border-gray-200 text-sm font-semibold">Cancel</button>
+            <button type="submit" disabled={loading}
+              className="flex-1 px-4 py-2.5 rounded-lg text-white font-bold text-sm disabled:opacity-60 flex items-center justify-center gap-2"
+              style={{ background: '#f15a24' }}>
+              {loading && <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />}
+              {loading ? 'Adding…' : 'Add Task'}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   )
