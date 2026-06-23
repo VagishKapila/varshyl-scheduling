@@ -32,11 +32,20 @@ export const authOptions: NextAuthOptions = {
     }),
   ],
   callbacks: {
-    async jwt({ token, user }) {
+    async jwt({ token, user, trigger }) {
       if (user) {
         token.id = user.id
         token.companyId = (user as any).companyId
         token.needsOnboarding = (user as any).needsOnboarding
+      }
+      if (trigger === 'update' && token.id) {
+        const cu = await prisma.companyUser.findFirst({
+          where: { userId: token.id as string },
+          include: { company: true },
+        })
+        token.companyId = cu?.companyId ?? null
+        token.needsOnboarding = !cu
+        token.companyName = cu?.company?.name ?? null
       }
       return token
     },

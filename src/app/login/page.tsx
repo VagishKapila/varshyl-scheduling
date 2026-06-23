@@ -64,6 +64,7 @@ export default function LoginPage() {
                 <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">Full Name</label>
                 <input
                   type="text" value={name} onChange={e => setName(e.target.value)}
+                  autoComplete="name"
                   className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
                   placeholder="John Smith" required
                 />
@@ -73,6 +74,7 @@ export default function LoginPage() {
               <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">Email</label>
               <input
                 type="email" value={email} onChange={e => setEmail(e.target.value)}
+                autoComplete="email"
                 className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
                 placeholder="you@company.com" required
               />
@@ -81,6 +83,7 @@ export default function LoginPage() {
               <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">Password</label>
               <input
                 type="password" value={password} onChange={e => setPassword(e.target.value)}
+                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                 className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
                 placeholder="••••••••" required minLength={6}
               />
