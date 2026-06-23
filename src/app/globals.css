@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --blue: #2458ff;
+  --red: #d71920;
+  --green: #138a36;
+  --teal: #168c9a;
+  --purple: #7a3cff;
+  --orange: #f15a24;
+  --black: #111;
+}
+
+* { box-sizing: border-box; }
+
+@media print {
+  .no-print { display: none !important; }
+  .print-only { display: block !important; }
+  body { background: white; }
+  @page { size: landscape; margin: 0.35in; }
+}
+
+.print-only { display: none; }
+
+.gantt-bar-blue    { background: var(--blue); }
+.gantt-bar-red     { background: var(--red); }
+.gantt-bar-green   { background: var(--green); }
+.gantt-bar-teal    { background: var(--teal); }
+.gantt-bar-purple  { background: var(--purple); }
+.gantt-bar-black   { background: var(--black); height: 4px; margin-top: 3px; }
