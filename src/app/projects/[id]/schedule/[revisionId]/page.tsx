@@ -27,7 +27,9 @@ const NAME_COL_STORAGE = 'gantt-name-col-width'
 const NAME_COL_MIN = 180
 const NAME_COL_MAX = 400
 const NAME_COL_DEFAULT = 220
-const LEFT_FIXED_COLS = 28 + 48 + 76 + 76 + 72 // #, days, start, finish, party
+const DRAG_COL = 20
+const ROW_H = 32
+const LEFT_FIXED_COLS = DRAG_COL + 28 + 48 + 76 + 76 + 72 // grip, #, days, start, finish, party
 
 function sortTasks(tasks: Task[]): Task[] {
   return [...tasks].sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id))
@@ -72,6 +74,45 @@ function getBarDates(task: Task, tasks: Task[]): { start: Date; finish: Date } {
   return { start: new Date(task.startDate), finish: new Date(task.finishDate) }
 }
 
+function dayOffsetFrom(date: Date | string, ganttStart: Date) {
+  return differenceInCalendarDays(new Date(date), ganttStart)
+}
+
+function getTaskBarGeometry(
+  task: Task, rowIndex: number, tasks: Task[], colPx: number, ganttStart: Date,
+) {
+  const barDates = getBarDates(task, tasks)
+  const startOff = dayOffsetFrom(barDates.start, ganttStart) * colPx
+  const dur = Math.max(1, differenceInCalendarDays(barDates.finish, barDates.start) + 1)
+  const barW = task.isMilestone || task.relationshipType === 'Milestone' ? 10 : dur * colPx - 4
+  const y = rowIndex * ROW_H + ROW_H / 2
+  const left = startOff + 2
+  const right = startOff + 2 + Math.max(barW, 4)
+  const isMil = task.isMilestone || task.relationshipType === 'Milestone'
+  return { y, left, right, isMilestone: isMil }
+}
+
+function elbowPath(x1: number, y1: number, x2: number, y2: number): string {
+  const midX = x1 + Math.sign(x2 - x1) * Math.max(12, Math.abs(x2 - x1) / 2)
+  return `M ${x1} ${y1} H ${midX} V ${y2} H ${x2}`
+}
+
+function getDragBlock(tasks: Task[], taskId: string): string[] {
+  const children = sortTasks(tasks).filter(t => t.parentTaskId === taskId)
+  if (children.length) return [taskId, ...children.map(c => c.id)]
+  return [taskId]
+}
+
+function reorderTaskList(tasks: Task[], blockIds: string[], targetId: string): string[] {
+  const sorted = sortTasks(tasks)
+  const blockSet = new Set(blockIds)
+  const blockTasks = sorted.filter(t => blockSet.has(t.id))
+  const remaining = sorted.filter(t => !blockSet.has(t.id))
+  const targetIdx = remaining.findIndex(t => t.id === targetId)
+  const insertAt = targetIdx >= 0 ? targetIdx : remaining.length
+  return [...remaining.slice(0, insertAt), ...blockTasks, ...remaining.slice(insertAt)].map(t => t.id)
+}
+
 interface Task {
   id: string; sortOrder: number; level: number; name: string
   durationDays: number; startDate: string; finishDate: string
@@ -99,6 +140,8 @@ export default function GanttPage() {
   const [saving, setSaving] = useState(false)
   const [nameColWidth, setNameColWidth] = useState(NAME_COL_DEFAULT)
   const resizeRef = useRef<{ startX: number; startW: number } | null>(null)
+  const [dragBlockIds, setDragBlockIds] = useState<string[]>([])
+  const [dragOverId, setDragOverId] = useState<string | null>(null)
 
   async function loadRevision() {
     const res = await fetch(`/api/revisions/${revisionId}`)
@@ -169,6 +212,23 @@ export default function GanttPage() {
     tickCur = addDays(tickCur, scaleConfig.stepDays)
   }
 
+  async function saveTask(id: string, data: Partial<Task>) {
+    const payload: Partial<Task> = { ...data }
+    if (payload.relationshipType === 'Milestone') {
+      payload.isMilestone = true
+      payload.durationDays = 0
+    } else if (payload.relationshipType && payload.relationshipType !== 'Milestone') {
+      payload.isMilestone = payload.isMilestone ?? false
+    }
+    await fetch(`/api/tasks/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    await fetch(`/api/revisions/${revisionId}/recalculate`, { method: 'POST' })
+    await loadRevision()
+  }
+
   async function updateTask(id: string, data: Partial<Task>) {
     await fetch(`/api/tasks/${id}`, {
       method: 'PATCH',
@@ -193,6 +253,27 @@ export default function GanttPage() {
     await loadRevision()
   }
 
+  async function reorderTasks(blockIds: string[], targetId: string) {
+    const taskIds = reorderTaskList(tasks, blockIds, targetId)
+    await fetch(`/api/revisions/${revisionId}/reorder`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ taskIds }),
+    })
+    await loadRevision()
+  }
+
+  function handleDragStart(taskId: string) {
+    setDragBlockIds(getDragBlock(sortedTasks, taskId))
+  }
+
+  function handleDrop(targetId: string) {
+    if (!dragBlockIds.length || dragBlockIds.includes(targetId)) return
+    reorderTasks(dragBlockIds, targetId)
+    setDragBlockIds([])
+    setDragOverId(null)
+  }
+
   function openTaskDrawer(taskId: string) {
     const task = tasks.find(t => t.id === taskId)
     if (task) {
@@ -212,6 +293,40 @@ export default function GanttPage() {
     setShowRevisionModal(false)
     router.push(`/projects/${projectId}`)
   }
+
+  const rowIndexById = new Map(sortedTasks.map((t, i) => [t.id, i]))
+  const ganttWidth = totalDays * COL_PX
+  const ganttHeight = sortedTasks.length * ROW_H
+
+  const dependencyLines = sortedTasks.flatMap(task => {
+    if (!task.predecessorTaskId || task.relationshipType === 'Manual') return []
+    const predIdx = rowIndexById.get(task.predecessorTaskId)
+    const succIdx = rowIndexById.get(task.id)
+    if (predIdx === undefined || succIdx === undefined) return []
+    const pred = sortedTasks[predIdx]
+    const predGeo = getTaskBarGeometry(pred, predIdx, sortedTasks, COL_PX, ganttStart)
+    const succGeo = getTaskBarGeometry(task, succIdx, sortedTasks, COL_PX, ganttStart)
+    const rel = task.relationshipType || 'FS'
+    let x1: number, x2: number
+    if (rel === 'SS') { x1 = predGeo.left; x2 = succGeo.left }
+    else if (rel === 'FF') { x1 = predGeo.right; x2 = succGeo.right }
+    else { x1 = predGeo.right; x2 = succGeo.left }
+    const y1 = predGeo.y
+    const y2 = succGeo.y
+    const d = elbowPath(x1, y1, x2, y2)
+    const pointingRight = x2 >= x1
+    const ax = x2
+    const ay = y2
+    const arrow = pointingRight
+      ? `${ax},${ay} ${ax - 5},${ay - 3} ${ax - 5},${ay + 3}`
+      : `${ax},${ay} ${ax + 5},${ay - 3} ${ax + 5},${ay + 3}`
+    return [(
+      <g key={`dep-${task.id}`}>
+        <path d={d} fill="none" stroke="#94a3b8" strokeWidth={1.5} />
+        <polygon points={arrow} fill="#94a3b8" />
+      </g>
+    )]
+  })
 
   if (loading) return <div className="min-h-screen bg-gray-50 flex items-center justify-center text-gray-400">Loading schedule…</div>
 
@@ -286,7 +401,8 @@ export default function GanttPage() {
           <div className="flex sticky top-0 z-10 bg-gray-50 border-b border-gray-200" style={{height:40}}>
             <div className="flex-shrink-0 border-r border-gray-200 relative" style={{width: leftPanelWidth}}>
               <div className="grid text-xs font-semibold text-gray-500 uppercase tracking-wide px-3 h-full items-center"
-                style={{gridTemplateColumns:`28px ${nameColWidth}px 48px 76px 76px 72px`}}>
+                style={{gridTemplateColumns:`${DRAG_COL}px 28px ${nameColWidth}px 48px 76px 76px 72px`}}>
+                <span />
                 <span>#</span>
                 <span className="relative pr-2">
                   Task Name
@@ -312,38 +428,68 @@ export default function GanttPage() {
             </div>
           </div>
 
-          {/* Task rows */}
-          {sortedTasks.map((task) => {
+          {/* Task rows + dependency overlay */}
+          <div className="relative">
+            <svg
+              className="absolute pointer-events-none no-print"
+              style={{ left: leftPanelWidth, top: 0, width: ganttWidth, height: ganttHeight, zIndex: 1 }}
+              aria-hidden
+            >
+              {dependencyLines}
+            </svg>
+
+          {sortedTasks.map((task, rowIndex) => {
             const isPhase = task.level === 0
             const isSummary = hasChildren(sortedTasks, task.id)
             const barDates = getBarDates(task, sortedTasks)
             const startOff = dayOffset(barDates.start) * COL_PX
             const dur = Math.max(1, differenceInCalendarDays(barDates.finish, barDates.start) + 1)
-            const barW = task.isMilestone ? 10 : dur * COL_PX - 4
+            const isMil = task.isMilestone || task.relationshipType === 'Milestone'
+            const barW = isMil ? 10 : dur * COL_PX - 4
             const barColor = COLOR_MAP[task.color] || '#2458ff'
             const indentPx = task.parentTaskId ? 22 * Math.max(1, task.level - 1) : 0
             const displayNum = displayNumbers.get(task.id) || '—'
+            const isDragging = dragBlockIds.includes(task.id)
+            const isDragOver = dragOverId === task.id
 
             return (
               <div key={task.id}
-                className={`flex border-b border-gray-100 cursor-pointer hover:bg-blue-50/30 ${isPhase || isSummary ? 'bg-gray-50' : ''} ${task.isCritical ? 'ring-inset ring-1 ring-red-200' : ''}`}
-                style={{height:32}}
+                className={`group flex border-b border-gray-100 cursor-pointer hover:bg-blue-50/30 ${isPhase || isSummary ? 'bg-gray-50' : ''} ${task.isCritical ? 'ring-inset ring-1 ring-red-200' : ''} ${isDragging ? 'opacity-50' : ''} ${isDragOver ? 'bg-orange-50' : ''}`}
+                style={{height: ROW_H}}
+                onDragOver={e => { e.preventDefault(); setDragOverId(task.id) }}
+                onDragLeave={() => setDragOverId(id => id === task.id ? null : id)}
+                onDrop={e => { e.preventDefault(); e.stopPropagation(); handleDrop(task.id) }}
                 onClick={() => openTaskDrawer(task.id)}>
                 {/* Left table */}
                 <div className="flex-shrink-0 border-r border-gray-200 flex items-center px-2"
                   style={{width: leftPanelWidth}}>
                   <div className="grid items-center gap-1 w-full text-xs"
-                    style={{gridTemplateColumns:`24px ${nameColWidth}px 44px 76px 76px 72px`}}>
+                    style={{gridTemplateColumns:`${DRAG_COL - 4}px 24px ${nameColWidth}px 44px 76px 76px 72px`}}>
+                    <span
+                      draggable
+                      onDragStart={e => { e.stopPropagation(); handleDragStart(task.id); e.dataTransfer.effectAllowed = 'move' }}
+                      onDragEnd={() => { setDragBlockIds([]); setDragOverId(null) }}
+                      className="cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 select-none text-center no-print"
+                      title="Drag to reorder"
+                      onClick={e => e.stopPropagation()}
+                    >⠿</span>
                     <span className="text-gray-400">{displayNum}</span>
                     <span className={`flex items-center gap-1 min-w-0 font-${isPhase || isSummary ? 'bold' : 'medium'} ${isPhase || isSummary ? 'text-gray-900' : 'text-gray-800'}`}
                       style={{paddingLeft: indentPx}}>
-                      {task.isMilestone && <span className="shrink-0" style={{color:barColor}}>◆</span>}
+                      {isMil && <span className="shrink-0" style={{color:barColor}}>◆</span>}
                       <span className="truncate flex-1">{task.name}</span>
-                      <button
-                        type="button"
-                        onClick={e => { e.stopPropagation(); copyTask(task.id) }}
-                        className="shrink-0 px-1.5 py-0.5 text-[10px] font-semibold text-orange-600 border border-orange-200 rounded hover:bg-orange-50 no-print"
-                      >Copy</button>
+                      <span className="shrink-0 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity no-print">
+                        <button
+                          type="button"
+                          onClick={e => { e.stopPropagation(); copyTask(task.id) }}
+                          className="px-1.5 py-0.5 text-[10px] font-semibold text-orange-600 border border-orange-200 rounded hover:bg-orange-50"
+                        >Copy</button>
+                        <button
+                          type="button"
+                          onClick={e => { e.stopPropagation(); deleteTask(task.id) }}
+                          className="px-1.5 py-0.5 text-[10px] font-semibold text-red-600 border border-red-200 rounded hover:bg-red-50"
+                        >Delete</button>
+                      </span>
                     </span>
                     <span className="text-gray-500 text-center">{task.durationDays}d</span>
                     <span className="text-gray-500">{format(barDates.start, 'M/d/yy')}</span>
@@ -353,7 +499,7 @@ export default function GanttPage() {
                 </div>
 
                 {/* Gantt bar */}
-                <div className="relative flex-1" style={{height:32}}>
+                <div className="relative flex-1" style={{height: ROW_H, zIndex: 2 }}>
                   {ticks.map((tick, wi) => (
                     <div key={`grid-${scale}-${wi}`} className="absolute top-0 bottom-0 w-px bg-gray-100"
                       style={{left: dayOffset(tick) * COL_PX}} />
@@ -361,7 +507,7 @@ export default function GanttPage() {
                   {/* Today line */}
                   <div className="absolute top-0 bottom-0 w-0.5" style={{left: dayOffset(today) * COL_PX, background:'#f15a24', opacity:0.4}} />
 
-                  {task.isMilestone ? (
+                  {isMil ? (
                     <div className="absolute" style={{
                       left: startOff + 5, top: 10,
                       width: 12, height: 12,
@@ -401,6 +547,7 @@ export default function GanttPage() {
               </div>
             )
           })}
+          </div>
         </div>
       </div>
 
@@ -416,7 +563,7 @@ export default function GanttPage() {
           <TaskDrawer key={selectedTask.id} task={selectedTask} tasks={sortedTasks}
             displayNumber={displayNumbers.get(selectedTask.id) || ''}
             onClose={() => setDrawerOpen(false)}
-            onSave={updateTask}
+            onSave={saveTask}
             onDelete={deleteTask}
             onDuplicate={copyTask} />
         )}
@@ -449,11 +596,12 @@ export default function GanttPage() {
 // Task Drawer
 function TaskDrawer({ task, tasks, displayNumber, onClose, onSave, onDelete, onDuplicate }: {
   task: Task; tasks: Task[]; displayNumber: string; onClose: () => void
-  onSave: (id: string, data: Partial<Task>) => void
+  onSave: (id: string, data: Partial<Task>) => Promise<void>
   onDelete: (id: string) => void
   onDuplicate: (id: string) => void
 }) {
   const [form, setForm] = useState({ ...task })
+  const [saving, setSaving] = useState(false)
   const set = (k: string, v: any) => setForm(f => ({ ...f, [k]: v }))
   const otherTasks = tasks.filter(t => t.id !== task.id)
   const parentOptions = tasks.filter(t => t.id !== task.id && !t.parentTaskId)
@@ -559,8 +707,20 @@ function TaskDrawer({ task, tasks, displayNumber, onClose, onSave, onDelete, onD
           className="px-3 py-2 rounded-lg border border-orange-200 text-orange-600 text-sm font-semibold hover:bg-orange-50">Duplicate</button>
         <button onClick={onClose}
           className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold min-w-[80px]">Cancel</button>
-        <button onClick={() => { onSave(task.id, form); onClose() }}
-          className="flex-1 px-3 py-2 rounded-lg text-white text-sm font-bold min-w-[80px]" style={{background:'#f15a24'}}>Save Changes</button>
+        <button
+          disabled={saving}
+          onClick={async () => {
+            setSaving(true)
+            try {
+              await onSave(task.id, form)
+              onClose()
+            } finally {
+              setSaving(false)
+            }
+          }}
+          className="flex-1 px-3 py-2 rounded-lg text-white text-sm font-bold min-w-[80px] disabled:opacity-60" style={{background:'#f15a24'}}>
+          {saving ? 'Saving…' : 'Save Changes'}
+        </button>
       </div>
     </div>
   )

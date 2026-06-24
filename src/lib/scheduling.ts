@@ -56,51 +56,91 @@ interface TaskLike {
   parentTaskId: string | null
 }
 
+export function subtractWorkingDays(finish: Date, days: number, saturdayWork = false): Date {
+  let current = new Date(finish)
+  let remaining = days
+  while (remaining > 0) {
+    current = addDays(current, -1)
+    if (isSunday(current)) continue
+    if (isSaturday(current) && !saturdayWork) continue
+    remaining--
+  }
+  return current
+}
+
+export function calcSuccessorDates(
+  predecessor: TaskLike,
+  successor: TaskLike,
+  saturdayWork = false,
+): { startDate: Date; finishDate: Date } {
+  const lag = successor.lagDays ?? 0
+  const rel = successor.relationshipType || 'FS'
+  const isMil = successor.isMilestone || rel === 'Milestone'
+  const dur = isMil ? 0 : Math.max(successor.durationDays, 1)
+
+  if (rel === 'Manual') {
+    return {
+      startDate: new Date(successor.startDate),
+      finishDate: new Date(successor.finishDate),
+    }
+  }
+
+  if (rel === 'Milestone' || isMil) {
+    const milestoneDate = nextWorkingDay(
+      addWorkingDays(predecessor.finishDate, lag, saturdayWork),
+      saturdayWork,
+    )
+    return { startDate: milestoneDate, finishDate: milestoneDate }
+  }
+
+  switch (rel) {
+    case 'FS': {
+      const start = nextWorkingDay(addWorkingDays(predecessor.finishDate, lag, saturdayWork), saturdayWork)
+      const finish = dur <= 1 ? start : addWorkingDays(start, dur - 1, saturdayWork)
+      return { startDate: start, finishDate: finish }
+    }
+    case 'SS': {
+      const start = nextWorkingDay(addWorkingDays(predecessor.startDate, lag, saturdayWork), saturdayWork)
+      const finish = dur <= 1 ? start : addWorkingDays(start, dur - 1, saturdayWork)
+      return { startDate: start, finishDate: finish }
+    }
+    case 'FF': {
+      const finish = addWorkingDays(predecessor.finishDate, lag, saturdayWork)
+      const start = dur <= 1 ? new Date(finish) : subtractWorkingDays(finish, dur - 1, saturdayWork)
+      return { startDate: start, finishDate: finish }
+    }
+    default: {
+      const start = nextWorkingDay(addWorkingDays(predecessor.finishDate, lag, saturdayWork), saturdayWork)
+      const finish = dur <= 1 ? start : addWorkingDays(start, dur - 1, saturdayWork)
+      return { startDate: start, finishDate: finish }
+    }
+  }
+}
+
 export function recalculateDates(
   tasks: TaskLike[],
   saturdayWork = false
 ): TaskLike[] {
   const sorted = [...tasks].sort((a, b) => a.sortOrder - b.sortOrder)
-  const byId = new Map(sorted.map(t => [t.id, { ...t }]))
+  let byId = new Map(sorted.map(t => [t.id, { ...t, startDate: new Date(t.startDate), finishDate: new Date(t.finishDate) }]))
 
-  for (const task of sorted) {
-    const t = byId.get(task.id)!
-    if (!task.predecessorTaskId || task.relationshipType === 'Manual') continue
+  for (let pass = 0; pass < sorted.length; pass++) {
+    let changed = false
+    for (const task of sorted) {
+      const t = byId.get(task.id)!
+      if (!task.predecessorTaskId || task.relationshipType === 'Manual') continue
+      const pred = byId.get(task.predecessorTaskId)
+      if (!pred) continue
 
-    const pred = byId.get(task.predecessorTaskId)
-    if (!pred) continue
-
-    let newStart = new Date(t.startDate)
-
-    if (task.relationshipType === 'FS') {
-      newStart = addWorkingDays(pred.finishDate, task.lagDays, saturdayWork)
-      newStart = nextWorkingDay(newStart, saturdayWork)
-    } else if (task.relationshipType === 'SS') {
-      newStart = addWorkingDays(pred.startDate, task.lagDays, saturdayWork)
-      newStart = nextWorkingDay(newStart, saturdayWork)
-    } else if (task.relationshipType === 'FF') {
-      const newFinish = addWorkingDays(pred.finishDate, task.lagDays, saturdayWork)
-      const dur = task.isMilestone ? 0 : task.durationDays
-      // work backwards
-      let d = new Date(newFinish)
-      let rem = dur
-      while (rem > 0) {
-        d = addDays(d, -1)
-        if (isSunday(d)) continue
-        if (isSaturday(d) && !saturdayWork) continue
-        rem--
+      const { startDate, finishDate } = calcSuccessorDates(pred, t, saturdayWork)
+      if (startDate.getTime() !== t.startDate.getTime() || finishDate.getTime() !== t.finishDate.getTime()) {
+        t.startDate = startDate
+        t.finishDate = finishDate
+        byId.set(task.id, t)
+        changed = true
       }
-      t.startDate = d
-      t.finishDate = newFinish
-      byId.set(t.id, t)
-      continue
     }
-
-    t.startDate = newStart
-    t.finishDate = task.isMilestone
-      ? newStart
-      : addWorkingDays(newStart, task.durationDays - 1, saturdayWork)
-    byId.set(t.id, t)
+    if (!changed) break
   }
 
   // Roll up parent rows: min start / max finish of children
