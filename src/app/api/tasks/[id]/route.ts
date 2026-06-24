@@ -23,7 +23,13 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   try {
     const session = await getServerSession(authOptions)
     if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const task = await prisma.scheduleTask.findUnique({ where: { id: params.id } })
+    if (!task) return NextResponse.json({ error: 'Task not found' }, { status: 404 })
     await prisma.scheduleTask.delete({ where: { id: params.id } })
+    await prisma.scheduleTask.updateMany({
+      where: { revisionId: task.revisionId, sortOrder: { gt: task.sortOrder } },
+      data: { sortOrder: { decrement: 1 } },
+    })
     return NextResponse.json({ data: { deleted: true } })
   } catch (e: any) {
     return NextResponse.json({ error: 'Failed to delete task' }, { status: 500 })

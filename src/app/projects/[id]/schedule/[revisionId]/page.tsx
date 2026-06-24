@@ -14,14 +14,62 @@ const SCALE_CONFIG: Record<string, {
   stepDays: number
   alignStart: (d: Date) => Date
   formatLabel: (d: Date) => string
-  showBarLabels: boolean
 }> = {
-  daily: { colPx: 28, stepDays: 1, alignStart: d => d, formatLabel: d => format(d, 'EEE MMM d'), showBarLabels: true },
-  weekly: { colPx: 10, stepDays: 7, alignStart: startOfWeek, formatLabel: d => `Week of ${format(d, 'MMM d')}`, showBarLabels: true },
-  '2-week': { colPx: 6, stepDays: 14, alignStart: d => d, formatLabel: d => format(d, 'MMM d'), showBarLabels: false },
-  monthly: { colPx: 3, stepDays: 30, alignStart: startOfMonth, formatLabel: d => format(d, 'MMMM yyyy'), showBarLabels: false },
-  quarterly: { colPx: 2, stepDays: 90, alignStart: startOfQuarter, formatLabel: d => `Q${Math.floor(d.getMonth() / 3) + 1} ${format(d, 'yyyy')}`, showBarLabels: false },
-  yearly: { colPx: 1, stepDays: 365, alignStart: startOfYear, formatLabel: d => format(d, 'yyyy'), showBarLabels: false },
+  daily: { colPx: 28, stepDays: 1, alignStart: d => d, formatLabel: d => format(d, 'EEE MMM d') },
+  weekly: { colPx: 10, stepDays: 7, alignStart: startOfWeek, formatLabel: d => `Week of ${format(d, 'MMM d')}` },
+  '2-week': { colPx: 6, stepDays: 14, alignStart: d => d, formatLabel: d => format(d, 'MMM d') },
+  monthly: { colPx: 3, stepDays: 30, alignStart: startOfMonth, formatLabel: d => format(d, 'MMMM yyyy') },
+  quarterly: { colPx: 2, stepDays: 90, alignStart: startOfQuarter, formatLabel: d => `Q${Math.floor(d.getMonth() / 3) + 1} ${format(d, 'yyyy')}` },
+  yearly: { colPx: 1, stepDays: 365, alignStart: startOfYear, formatLabel: d => format(d, 'yyyy') },
+}
+
+const NAME_COL_STORAGE = 'gantt-name-col-width'
+const NAME_COL_MIN = 180
+const NAME_COL_MAX = 400
+const NAME_COL_DEFAULT = 220
+const LEFT_FIXED_COLS = 28 + 48 + 76 + 76 + 72 // #, days, start, finish, party
+
+function sortTasks(tasks: Task[]): Task[] {
+  return [...tasks].sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id))
+}
+
+function computeDisplayNumbers(tasks: Task[]): Map<string, string> {
+  const sorted = sortTasks(tasks)
+  const map = new Map<string, string>()
+  let rootNum = 0
+  const childCounts = new Map<string, number>()
+  for (const t of sorted) {
+    if (!t.parentTaskId) {
+      rootNum++
+      map.set(t.id, String(rootNum))
+    } else {
+      const parentNum = map.get(t.parentTaskId)
+      if (parentNum) {
+        const cnt = (childCounts.get(t.parentTaskId) || 0) + 1
+        childCounts.set(t.parentTaskId, cnt)
+        map.set(t.id, `${parentNum}.${cnt}`)
+      } else {
+        rootNum++
+        map.set(t.id, String(rootNum))
+      }
+    }
+  }
+  return map
+}
+
+function hasChildren(tasks: Task[], taskId: string): boolean {
+  return tasks.some(t => t.parentTaskId === taskId)
+}
+
+function getBarDates(task: Task, tasks: Task[]): { start: Date; finish: Date } {
+  if (hasChildren(tasks, task.id)) {
+    const children = tasks.filter(t => t.parentTaskId === task.id)
+    return {
+      start: new Date(Math.min(...children.map(c => new Date(c.startDate).getTime()))),
+      finish: new Date(Math.max(...children.map(c => new Date(c.finishDate).getTime()))),
+    }
+  }
+  return { start: new Date(task.startDate), finish: new Date(task.finishDate) }
 }
 
 interface Task {
@@ -49,18 +97,55 @@ export default function GanttPage() {
   const [showAddTaskModal, setShowAddTaskModal] = useState(false)
   const [showRevisionModal, setShowRevisionModal] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [nameColWidth, setNameColWidth] = useState(NAME_COL_DEFAULT)
+  const resizeRef = useRef<{ startX: number; startW: number } | null>(null)
 
   async function loadRevision() {
     const res = await fetch(`/api/revisions/${revisionId}`)
     const d = await res.json()
     setRevision(d.data)
-    setTasks((d.data?.tasks || []).sort((a: Task, b: Task) => a.sortOrder - b.sortOrder))
+    setTasks(sortTasks(d.data?.tasks || []))
     setLoading(false)
   }
 
   useEffect(() => {
     loadRevision()
   }, [revisionId])
+
+  useEffect(() => {
+    const saved = localStorage.getItem(NAME_COL_STORAGE)
+    if (saved) {
+      const w = Number(saved)
+      if (!Number.isNaN(w)) setNameColWidth(Math.min(NAME_COL_MAX, Math.max(NAME_COL_MIN, w)))
+    }
+  }, [])
+
+  function persistNameColWidth(w: number) {
+    const clamped = Math.min(NAME_COL_MAX, Math.max(NAME_COL_MIN, w))
+    setNameColWidth(clamped)
+    localStorage.setItem(NAME_COL_STORAGE, String(clamped))
+  }
+
+  function onResizeStart(e: React.MouseEvent) {
+    e.preventDefault()
+    resizeRef.current = { startX: e.clientX, startW: nameColWidth }
+    function onMove(ev: MouseEvent) {
+      if (!resizeRef.current) return
+      const delta = ev.clientX - resizeRef.current.startX
+      persistNameColWidth(resizeRef.current.startW + delta)
+    }
+    function onUp() {
+      resizeRef.current = null
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  const sortedTasks = sortTasks(tasks)
+  const displayNumbers = computeDisplayNumbers(sortedTasks)
+  const leftPanelWidth = LEFT_FIXED_COLS + nameColWidth
 
   const scaleConfig = SCALE_CONFIG[scale] || SCALE_CONFIG.weekly
   const COL_PX = scaleConfig.colPx
@@ -97,8 +182,23 @@ export default function GanttPage() {
   async function deleteTask(id: string) {
     if (!confirm('Delete this task?')) return
     await fetch(`/api/tasks/${id}`, { method: 'DELETE' })
-    setTasks(ts => ts.filter(t => t.id !== id))
     setDrawerOpen(false)
+    setSelectedTask(null)
+    await loadRevision()
+  }
+
+  async function copyTask(id: string) {
+    await fetch(`/api/tasks/${id}/duplicate`, { method: 'POST' })
+    await fetch(`/api/revisions/${revisionId}/recalculate`, { method: 'POST' })
+    await loadRevision()
+  }
+
+  function openTaskDrawer(taskId: string) {
+    const task = tasks.find(t => t.id === taskId)
+    if (task) {
+      setSelectedTask(task)
+      setDrawerOpen(true)
+    }
   }
 
   async function saveRevision(revisionName: string, notes: string) {
@@ -181,13 +281,23 @@ export default function GanttPage() {
 
       {/* Gantt table */}
       <div className="flex-1 overflow-auto">
-        <div style={{minWidth: 480 + totalDays * COL_PX}}>
+        <div style={{minWidth: leftPanelWidth + totalDays * COL_PX}}>
           {/* Header row with dates */}
           <div className="flex sticky top-0 z-10 bg-gray-50 border-b border-gray-200" style={{height:40}}>
-            <div className="flex-shrink-0 border-r border-gray-200" style={{width:480}}>
+            <div className="flex-shrink-0 border-r border-gray-200 relative" style={{width: leftPanelWidth}}>
               <div className="grid text-xs font-semibold text-gray-500 uppercase tracking-wide px-3 h-full items-center"
-                style={{gridTemplateColumns:'28px 1fr 48px 80px 80px 80px'}}>
-                <span>#</span><span>Task Name</span><span>Days</span><span>Start</span><span>Finish</span><span>Party</span>
+                style={{gridTemplateColumns:`28px ${nameColWidth}px 48px 76px 76px 72px`}}>
+                <span>#</span>
+                <span className="relative pr-2">
+                  Task Name
+                  <div
+                    role="separator"
+                    aria-orientation="vertical"
+                    onMouseDown={onResizeStart}
+                    className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-orange-300/60 active:bg-orange-400/80"
+                  />
+                </span>
+                <span>Days</span><span>Start</span><span>Finish</span><span>Party</span>
               </div>
             </div>
             {/* Date ticks */}
@@ -203,33 +313,41 @@ export default function GanttPage() {
           </div>
 
           {/* Task rows */}
-          {tasks.map((task, i) => {
+          {sortedTasks.map((task) => {
             const isPhase = task.level === 0
-            const startOff = dayOffset(task.startDate) * COL_PX
-            const dur = Math.max(1, differenceInCalendarDays(new Date(task.finishDate), new Date(task.startDate)) + 1)
+            const isSummary = hasChildren(sortedTasks, task.id)
+            const barDates = getBarDates(task, sortedTasks)
+            const startOff = dayOffset(barDates.start) * COL_PX
+            const dur = Math.max(1, differenceInCalendarDays(barDates.finish, barDates.start) + 1)
             const barW = task.isMilestone ? 10 : dur * COL_PX - 4
             const barColor = COLOR_MAP[task.color] || '#2458ff'
-            const indent = task.level * 20
+            const indentPx = task.parentTaskId ? 22 * Math.max(1, task.level - 1) : 0
+            const displayNum = displayNumbers.get(task.id) || '—'
 
             return (
               <div key={task.id}
-                className={`flex border-b border-gray-100 cursor-pointer hover:bg-blue-50/30 ${isPhase ? 'bg-gray-50' : ''} ${task.isCritical ? 'ring-inset ring-1 ring-red-200' : ''}`}
+                className={`flex border-b border-gray-100 cursor-pointer hover:bg-blue-50/30 ${isPhase || isSummary ? 'bg-gray-50' : ''} ${task.isCritical ? 'ring-inset ring-1 ring-red-200' : ''}`}
                 style={{height:32}}
-                onClick={() => { setSelectedTask(task); setDrawerOpen(true) }}>
+                onClick={() => openTaskDrawer(task.id)}>
                 {/* Left table */}
                 <div className="flex-shrink-0 border-r border-gray-200 flex items-center px-2"
-                  style={{width:480, paddingLeft: indent + 8}}>
+                  style={{width: leftPanelWidth}}>
                   <div className="grid items-center gap-1 w-full text-xs"
-                    style={{gridTemplateColumns:'24px 1fr 44px 76px 76px 72px'}}>
-                    <span className="text-gray-400">{i+1}</span>
-                    <span className={`truncate font-${isPhase ? 'bold' : 'medium'} ${isPhase ? 'text-gray-900' : 'text-gray-800'}`}
-                      style={{paddingLeft: indent}}>
-                      {task.isMilestone && <span className="mr-1" style={{color:barColor}}>◆</span>}
-                      {task.name}
+                    style={{gridTemplateColumns:`24px ${nameColWidth}px 44px 76px 76px 72px`}}>
+                    <span className="text-gray-400">{displayNum}</span>
+                    <span className={`flex items-center gap-1 min-w-0 font-${isPhase || isSummary ? 'bold' : 'medium'} ${isPhase || isSummary ? 'text-gray-900' : 'text-gray-800'}`}
+                      style={{paddingLeft: indentPx}}>
+                      {task.isMilestone && <span className="shrink-0" style={{color:barColor}}>◆</span>}
+                      <span className="truncate flex-1">{task.name}</span>
+                      <button
+                        type="button"
+                        onClick={e => { e.stopPropagation(); copyTask(task.id) }}
+                        className="shrink-0 px-1.5 py-0.5 text-[10px] font-semibold text-orange-600 border border-orange-200 rounded hover:bg-orange-50 no-print"
+                      >Copy</button>
                     </span>
                     <span className="text-gray-500 text-center">{task.durationDays}d</span>
-                    <span className="text-gray-500">{format(new Date(task.startDate), 'M/d/yy')}</span>
-                    <span className="text-gray-500">{format(new Date(task.finishDate), 'M/d/yy')}</span>
+                    <span className="text-gray-500">{format(barDates.start, 'M/d/yy')}</span>
+                    <span className="text-gray-500">{format(barDates.finish, 'M/d/yy')}</span>
                     <span className="text-gray-400 truncate">{task.responsibleParty || ''}</span>
                   </div>
                 </div>
@@ -250,18 +368,32 @@ export default function GanttPage() {
                       background: barColor,
                       transform: 'rotate(45deg)',
                     }} />
-                  ) : (
-                    <div className={`absolute rounded ${isPhase ? '' : 'rounded'} flex items-center overflow-hidden`}
+                  ) : isSummary ? (
+                    <div className="absolute rounded flex items-center overflow-hidden"
                       style={{
                         left: startOff + 2,
-                        top: isPhase ? 13 : 9,
+                        top: 13,
                         width: Math.max(barW, 4),
-                        height: isPhase ? 6 : 14,
+                        height: 6,
+                        background: barColor,
+                        opacity: 0.7,
+                      }}>
+                      {barW >= 60 && (
+                        <span className="px-1 text-[10px] font-semibold text-white truncate block w-full" style={{ textOverflow: 'ellipsis', overflow: 'hidden' }}>{task.name}</span>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="absolute rounded flex items-center overflow-hidden"
+                      style={{
+                        left: startOff + 2,
+                        top: 9,
+                        width: Math.max(barW, 4),
+                        height: 14,
                         background: barColor,
                         opacity: task.isCritical ? 1 : 0.85,
                       }}>
-                      {scaleConfig.showBarLabels && barW >= 72 && !isPhase && (
-                        <span className="px-1 text-[10px] font-semibold text-white truncate">{task.name}</span>
+                      {barW >= 60 && (
+                        <span className="px-1 text-[10px] font-semibold text-white truncate block w-full" style={{ textOverflow: 'ellipsis', overflow: 'hidden' }}>{task.name}</span>
                       )}
                     </div>
                   )}
@@ -281,10 +413,12 @@ export default function GanttPage() {
       {/* Task drawer */}
       <div className={`fixed inset-y-0 right-0 w-96 bg-white border-l border-gray-200 shadow-2xl z-30 transition-transform duration-200 no-print ${drawerOpen ? 'translate-x-0' : 'translate-x-full'}`}>
         {selectedTask && (
-          <TaskDrawer task={selectedTask} tasks={tasks}
+          <TaskDrawer key={selectedTask.id} task={selectedTask} tasks={sortedTasks}
+            displayNumber={displayNumbers.get(selectedTask.id) || ''}
             onClose={() => setDrawerOpen(false)}
             onSave={updateTask}
-            onDelete={deleteTask} />
+            onDelete={deleteTask}
+            onDuplicate={copyTask} />
         )}
       </div>
       {drawerOpen && <div className="fixed inset-0 bg-black/10 z-20 no-print" onClick={() => setDrawerOpen(false)} />}
@@ -313,19 +447,21 @@ export default function GanttPage() {
 }
 
 // Task Drawer
-function TaskDrawer({ task, tasks, onClose, onSave, onDelete }: {
-  task: Task; tasks: Task[]; onClose: () => void
+function TaskDrawer({ task, tasks, displayNumber, onClose, onSave, onDelete, onDuplicate }: {
+  task: Task; tasks: Task[]; displayNumber: string; onClose: () => void
   onSave: (id: string, data: Partial<Task>) => void
   onDelete: (id: string) => void
+  onDuplicate: (id: string) => void
 }) {
   const [form, setForm] = useState({ ...task })
   const set = (k: string, v: any) => setForm(f => ({ ...f, [k]: v }))
   const otherTasks = tasks.filter(t => t.id !== task.id)
+  const parentOptions = tasks.filter(t => t.id !== task.id && !t.parentTaskId)
 
   return (
     <div className="h-full flex flex-col">
       <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white z-10">
-        <h2 className="font-bold text-gray-900 text-sm">Edit Task</h2>
+        <h2 className="font-bold text-gray-900 text-sm">Edit Task{displayNumber ? ` #${displayNumber}` : ''}</h2>
         <button onClick={onClose} className="w-7 h-7 rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200 text-sm">✕</button>
       </div>
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -370,7 +506,15 @@ function TaskDrawer({ task, tasks, onClose, onSave, onDelete }: {
           <select value={form.predecessorTaskId || ''} onChange={e => set('predecessorTaskId', e.target.value || null)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400">
             <option value="">None</option>
-            {otherTasks.map(t => <option key={t.id} value={t.id}>{t.sortOrder}. {t.name}</option>)}
+            {otherTasks.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Nest under (optional)</label>
+          <select value={form.parentTaskId || ''} onChange={e => set('parentTaskId', e.target.value || null)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400">
+            <option value="">None — top level</option>
+            {parentOptions.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
         </div>
         <div>
@@ -408,13 +552,15 @@ function TaskDrawer({ task, tasks, onClose, onSave, onDelete }: {
           ))}
         </div>
       </div>
-      <div className="p-4 border-t border-gray-200 flex gap-2">
+      <div className="p-4 border-t border-gray-200 flex flex-wrap gap-2">
         <button onClick={() => onDelete(task.id)}
           className="px-3 py-2 rounded-lg border border-red-200 text-red-600 text-sm font-semibold hover:bg-red-50">Delete</button>
+        <button onClick={() => { onDuplicate(task.id); onClose() }}
+          className="px-3 py-2 rounded-lg border border-orange-200 text-orange-600 text-sm font-semibold hover:bg-orange-50">Duplicate</button>
         <button onClick={onClose}
-          className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold">Cancel</button>
+          className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold min-w-[80px]">Cancel</button>
         <button onClick={() => { onSave(task.id, form); onClose() }}
-          className="flex-1 px-3 py-2 rounded-lg text-white text-sm font-bold" style={{background:'#f15a24'}}>Save Changes</button>
+          className="flex-1 px-3 py-2 rounded-lg text-white text-sm font-bold min-w-[80px]" style={{background:'#f15a24'}}>Save Changes</button>
       </div>
     </div>
   )
@@ -435,8 +581,11 @@ function AddTaskModal({ revisionId, tasks, onClose, onAdded }: {
   const [lagDays, setLagDays] = useState(0)
   const [color, setColor] = useState('blue')
   const [responsibleParty, setResponsibleParty] = useState('')
+  const [parentTaskId, setParentTaskId] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+
+  const parentOptions = tasks.filter(t => !t.parentTaskId)
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -452,6 +601,7 @@ function AddTaskModal({ revisionId, tasks, onClose, onAdded }: {
           durationDays,
           startDate,
           predecessorTaskId: predecessorTaskId || null,
+          parentTaskId: parentTaskId || null,
           relationshipType,
           lagDays,
           color,
@@ -502,7 +652,17 @@ function AddTaskModal({ revisionId, tasks, onClose, onAdded }: {
               className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm">
               <option value="">None</option>
               {tasks.map(t => (
-                <option key={t.id} value={t.id}>{t.sortOrder}. {t.name}</option>
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Nest under (optional)</label>
+            <select value={parentTaskId} onChange={e => setParentTaskId(e.target.value)}
+              className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm">
+              <option value="">None — top level</option>
+              {parentOptions.map(t => (
+                <option key={t.id} value={t.id}>{t.name}</option>
               ))}
             </select>
           </div>
@@ -593,7 +753,7 @@ function HoldModal({ revisionId, tasks, project, onClose, onAdded }: any) {
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Insert After Task</label>
             <select value={afterTaskId} onChange={e => setAfterTaskId(e.target.value)}
               className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm">
-              {tasks.map((t: Task) => <option key={t.id} value={t.id}>{t.sortOrder}. {t.name}</option>)}
+              {tasks.map((t: Task) => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
           </div>
           <div>

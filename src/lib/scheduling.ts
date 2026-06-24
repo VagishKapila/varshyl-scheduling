@@ -103,15 +103,15 @@ export function recalculateDates(
     byId.set(t.id, t)
   }
 
-  // Update phase rows: min start / max finish of children
-  const phases = sorted.filter(t => t.level === 0)
-  for (const phase of phases) {
-    const children = sorted.filter(t => t.parentTaskId === phase.id)
+  // Roll up parent rows: min start / max finish of children
+  const parents = sorted.filter(t => sorted.some(c => c.parentTaskId === t.id))
+  for (const parent of parents) {
+    const children = sorted.filter(t => t.parentTaskId === parent.id)
     if (!children.length) continue
-    const p = byId.get(phase.id)!
+    const p = byId.get(parent.id)!
     p.startDate = new Date(Math.min(...children.map(c => byId.get(c.id)!.startDate.getTime())))
     p.finishDate = new Date(Math.max(...children.map(c => byId.get(c.id)!.finishDate.getTime())))
-    byId.set(phase.id, p)
+    byId.set(parent.id, p)
   }
 
   return sorted.map(t => byId.get(t.id)!)
