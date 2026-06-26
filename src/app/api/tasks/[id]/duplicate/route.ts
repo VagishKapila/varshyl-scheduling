@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { recalculateDates } from '@/lib/scheduling'
 
 function taskCopyData(source: any, overrides: Record<string, unknown> = {}) {
   return {
@@ -42,6 +43,12 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     const original = await prisma.scheduleTask.findUnique({ where: { id: params.id } })
     if (!original) return NextResponse.json({ error: 'Task not found' }, { status: 404 })
 
+    const revision = await prisma.scheduleRevision.findUnique({
+      where: { id: original.revisionId },
+      include: { project: true },
+    })
+    if (!revision) return NextResponse.json({ error: 'Revision not found' }, { status: 404 })
+
     const children = await prisma.scheduleTask.findMany({
       where: { parentTaskId: original.id },
       orderBy: { sortOrder: 'asc' },
@@ -61,22 +68,48 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
       data: taskCopyData(original, {
         parentTaskId: original.parentTaskId,
         sortOrder: insertSort,
-        predecessorTaskId: original.predecessorTaskId,
+        predecessorTaskId: original.id,
+        relationshipType: 'FS',
+        lagDays: 0,
       }),
     })
     idMap.set(original.id, newParent.id)
 
     const createdChildren = []
-    for (const child of children) {
+    for (let i = 0; i < children.length; i++) {
+      const child = children[i]
+      const remappedPredecessor = remapPredecessor(child.predecessorTaskId, idMap)
       const newChild = await prisma.scheduleTask.create({
         data: taskCopyData(child, {
           parentTaskId: newParent.id,
-          sortOrder: child.sortOrder + 1,
-          predecessorTaskId: remapPredecessor(child.predecessorTaskId, idMap),
+          sortOrder: insertSort + 1 + i,
+          predecessorTaskId: remappedPredecessor,
         }),
       })
       idMap.set(child.id, newChild.id)
       createdChildren.push(newChild)
+    }
+
+    const allTasks = await prisma.scheduleTask.findMany({
+      where: { revisionId: original.revisionId },
+      orderBy: { sortOrder: 'asc' },
+    })
+
+    const recalculated = recalculateDates(
+      allTasks.map(t => ({
+        ...t,
+        startDate: new Date(t.startDate),
+        finishDate: new Date(t.finishDate),
+      })),
+      revision.project.saturdayWork,
+      new Date(revision.project.startDate),
+    )
+
+    for (const t of recalculated) {
+      await prisma.scheduleTask.update({
+        where: { id: t.id },
+        data: { startDate: t.startDate, finishDate: t.finishDate },
+      })
     }
 
     return NextResponse.json({

@@ -39,10 +39,12 @@ export function addWorkingDays(start: Date, days: number, saturdayWork = false):
 
   let current = atMidnight(start)
   let remaining = days
+  const direction = 1
   while (remaining > 0) {
-    current = addDays(current, 1)
-    if (!isWorkingDay(current, saturdayWork)) continue
-    remaining--
+    current = addDays(current, direction)
+    const dow = current.getDay()
+    const isWeekend = dow === 0 || (!saturdayWork && dow === 6)
+    if (!isWeekend) remaining--
   }
   return current
 }
@@ -53,10 +55,12 @@ export function subtractWorkingDays(finish: Date, days: number, saturdayWork = f
 
   let current = atMidnight(finish)
   let remaining = days
+  const direction = -1
   while (remaining > 0) {
-    current = addDays(current, -1)
-    if (!isWorkingDay(current, saturdayWork)) continue
-    remaining--
+    current = addDays(current, direction)
+    const dow = current.getDay()
+    const isWeekend = dow === 0 || (!saturdayWork && dow === 6)
+    if (!isWeekend) remaining--
   }
   return current
 }
@@ -288,7 +292,7 @@ export function generateScheduleFromTemplate(
       isMilestone: t.isMilestone || false,
       parentTaskId: null as string | null,
       _templateId: t.id,
-      _predTemplateId: t.predecessorTemplateTaskId || null,
+      _predTemplateId: predResult ? t.predecessorTemplateTaskId : null,
     }
 
     indexById.set(t.id, i)

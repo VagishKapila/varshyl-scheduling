@@ -4,24 +4,6 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { generateScheduleFromTemplate, autoColor, recalculateDates } from '@/lib/scheduling'
 
-function expandWithPredecessors(selected: any[], allTasks: any[]) {
-  const byId = new Map(allTasks.map(t => [t.id, t]))
-  const included = new Set(selected.map(t => t.id))
-  const queue = [...selected]
-  while (queue.length) {
-    const task = queue.pop()!
-    const predId = task.predecessorTemplateTaskId
-    if (predId && !included.has(predId)) {
-      const pred = byId.get(predId)
-      if (pred) {
-        included.add(pred.id)
-        queue.push(pred)
-      }
-    }
-  }
-  return allTasks.filter(t => included.has(t.id))
-}
-
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const session = await getServerSession(authOptions)
@@ -41,22 +23,34 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     if (!template) return NextResponse.json({ error: 'Template not found' }, { status: 404 })
 
     const isNoPermit = ['no-permit', 'emergency'].includes(project.permitStatus)
+    const selectedSet = new Set<string>(selectedTaskIds ?? [])
     let tasksToUse: any[] = selectedTaskIds?.length
       ? template.tasks.filter((t: any) => selectedTaskIds.includes(t.id))
       : [...template.tasks]
 
-    tasksToUse = expandWithPredecessors(tasksToUse, template.tasks)
-
     if (isNoPermit) tasksToUse = tasksToUse.filter((t: any) => !t.isPermitRelated)
 
-    const adjustedTasks = tasksToUse.map((t: any) => ({
-      ...t,
-      defaultDurationDays: taskDurations?.[t.id] ?? (
-        t.isPermitRelated && project.permitDays > 0
-          ? project.permitDays
-          : t.defaultDurationDays
-      ),
-    }))
+    const adjustedTasks = tasksToUse.map((t: any) => {
+      const predDeselected = Boolean(
+        selectedTaskIds?.length &&
+        t.predecessorTemplateTaskId &&
+        !selectedSet.has(t.predecessorTemplateTaskId),
+      )
+      return {
+        ...t,
+        predecessorTemplateTaskId: predDeselected ? null : t.predecessorTemplateTaskId,
+        defaultDurationDays: taskDurations?.[t.id] ?? (
+          t.isPermitRelated && project.permitDays > 0
+            ? project.permitDays
+            : t.defaultDurationDays
+        ),
+      }
+    })
+
+    console.log(
+      '[POST generate-schedule] final template task IDs:',
+      adjustedTasks.map((t: any) => t.id).join(', '),
+    )
 
     await prisma.scheduleRevision.updateMany({
       where: { projectId: project.id },
@@ -83,7 +77,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const insertedTasks: any[] = []
 
     for (const t of generatedTasks) {
-      const predId = t._predTemplateId ? (idMap.get(t._predTemplateId) ?? null) : null
+      const predId = t._predTemplateId && idMap.has(t._predTemplateId)
+        ? (idMap.get(t._predTemplateId) ?? null)
+        : null
       const created = await prisma.scheduleTask.create({
         data: {
           revisionId: revision.id,

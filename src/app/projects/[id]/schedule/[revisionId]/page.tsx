@@ -36,25 +36,64 @@ function sortTasks(tasks: Task[]): Task[] {
   return [...tasks].sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id))
 }
 
-function computeDisplayNumbers(tasks: Task[]): Map<string, string> {
-  const sorted = sortTasks(tasks)
+/** Parent → children → next parent (tree order for display). */
+function buildRenderOrder(tasks: Task[]): Task[] {
+  const byParent = new Map<string | null, Task[]>()
+  for (const t of tasks) {
+    const key = t.parentTaskId ?? null
+    if (!byParent.has(key)) byParent.set(key, [])
+    byParent.get(key)!.push(t)
+  }
+  for (const list of byParent.values()) {
+    list.sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id))
+  }
+  const result: Task[] = []
+  const placed = new Set<string>()
+  function appendWithChildren(task: Task) {
+    result.push(task)
+    placed.add(task.id)
+    for (const child of byParent.get(task.id) ?? []) {
+      appendWithChildren(child)
+    }
+  }
+  for (const root of byParent.get(null) ?? []) {
+    appendWithChildren(root)
+  }
+  for (const t of sortTasks(tasks)) {
+    if (!placed.has(t.id)) result.push(t)
+  }
+  return result
+}
+
+function taskNestingDepth(task: Task, tasks: Task[]): number {
+  const byId = new Map(tasks.map(t => [t.id, t]))
+  let depth = 0
+  let cur: string | null = task.parentTaskId
+  while (cur) {
+    depth++
+    cur = byId.get(cur)?.parentTaskId ?? null
+  }
+  return depth
+}
+
+function computeDisplayNumbers(rendered: Task[]): Map<string, string> {
   const map = new Map<string, string>()
-  let rootNum = 0
   const childCounts = new Map<string, number>()
-  for (const t of sorted) {
+  let rootNum = 0
+  for (const t of rendered) {
     if (!t.parentTaskId) {
       rootNum++
       map.set(t.id, String(rootNum))
     } else {
       const parentNum = map.get(t.parentTaskId)
-      if (parentNum) {
-        const cnt = (childCounts.get(t.parentTaskId) || 0) + 1
-        childCounts.set(t.parentTaskId, cnt)
-        map.set(t.id, `${parentNum}.${cnt}`)
-      } else {
+      if (!parentNum) {
         rootNum++
         map.set(t.id, String(rootNum))
+        continue
       }
+      const cnt = (childCounts.get(t.parentTaskId) || 0) + 1
+      childCounts.set(t.parentTaskId, cnt)
+      map.set(t.id, `${parentNum}.${cnt}`)
     }
   }
   return map
@@ -99,9 +138,18 @@ function elbowPath(x1: number, y1: number, x2: number, y2: number): string {
 }
 
 function getDragBlock(tasks: Task[], taskId: string): string[] {
-  const children = sortTasks(tasks).filter(t => t.parentTaskId === taskId)
-  if (children.length) return [taskId, ...children.map(c => c.id)]
-  return [taskId]
+  const rendered = buildRenderOrder(tasks)
+  const block = [taskId]
+  function collectChildren(parentId: string) {
+    for (const child of rendered.filter(t => t.parentTaskId === parentId)) {
+      block.push(child.id)
+      collectChildren(child.id)
+    }
+  }
+  if (rendered.some(t => t.parentTaskId === taskId)) {
+    collectChildren(taskId)
+  }
+  return block
 }
 
 function reorderTaskList(tasks: Task[], blockIds: string[], targetId: string): string[] {
@@ -188,7 +236,8 @@ export default function GanttPage() {
   }
 
   const sortedTasks = sortTasks(tasks)
-  const displayNumbers = computeDisplayNumbers(sortedTasks)
+  const renderedTasks = buildRenderOrder(tasks)
+  const displayNumbers = computeDisplayNumbers(renderedTasks)
   const leftPanelWidth = LEFT_FIXED_COLS + nameColWidth
 
   const scaleConfig = SCALE_CONFIG[scale] || SCALE_CONFIG.weekly
@@ -267,7 +316,7 @@ export default function GanttPage() {
   }
 
   function handleDragStart(taskId: string) {
-    setDragBlockIds(getDragBlock(sortedTasks, taskId))
+    setDragBlockIds(getDragBlock(tasks, taskId))
   }
 
   function handleDrop(targetId: string) {
@@ -297,18 +346,18 @@ export default function GanttPage() {
     router.push(`/projects/${projectId}`)
   }
 
-  const rowIndexById = new Map(sortedTasks.map((t, i) => [t.id, i]))
+  const rowIndexById = new Map(renderedTasks.map((t, i) => [t.id, i]))
   const ganttWidth = totalDays * COL_PX
-  const ganttHeight = sortedTasks.length * ROW_H
+  const ganttHeight = renderedTasks.length * ROW_H
 
-  const dependencyLines = sortedTasks.flatMap(task => {
+  const dependencyLines = renderedTasks.flatMap(task => {
     if (!task.predecessorTaskId || task.relationshipType === 'Manual') return []
     const predIdx = rowIndexById.get(task.predecessorTaskId)
     const succIdx = rowIndexById.get(task.id)
     if (predIdx === undefined || succIdx === undefined) return []
-    const pred = sortedTasks[predIdx]
-    const predGeo = getTaskBarGeometry(pred, predIdx, sortedTasks, COL_PX, ganttStart)
-    const succGeo = getTaskBarGeometry(task, succIdx, sortedTasks, COL_PX, ganttStart)
+    const pred = renderedTasks[predIdx]
+    const predGeo = getTaskBarGeometry(pred, predIdx, renderedTasks, COL_PX, ganttStart)
+    const succGeo = getTaskBarGeometry(task, succIdx, renderedTasks, COL_PX, ganttStart)
     const rel = task.relationshipType || 'FS'
     let x1: number, x2: number
     if (rel === 'SS') { x1 = predGeo.left; x2 = succGeo.left }
@@ -442,16 +491,16 @@ export default function GanttPage() {
               {dependencyLines}
             </svg>
 
-          {sortedTasks.map((task, rowIndex) => {
+          {renderedTasks.map((task, rowIndex) => {
             const isPhase = task.level === 0
-            const isSummary = hasChildren(sortedTasks, task.id)
-            const barDates = getBarDates(task, sortedTasks)
+            const isSummary = hasChildren(tasks, task.id)
+            const barDates = getBarDates(task, tasks)
             const startOff = dayOffset(barDates.start) * COL_PX
             const dur = Math.max(1, differenceInCalendarDays(barDates.finish, barDates.start) + 1)
             const isMil = task.isMilestone || task.relationshipType === 'Milestone'
             const barW = isMil ? 10 : dur * COL_PX - 4
             const barColor = COLOR_MAP[task.color] || '#2458ff'
-            const indentPx = task.parentTaskId ? 22 * Math.max(1, task.level - 1) : 0
+            const indentPx = taskNestingDepth(task, tasks) * 22
             const displayNum = displayNumbers.get(task.id) || '—'
             const isDragging = dragBlockIds.includes(task.id)
             const isDragOver = dragOverId === task.id
@@ -564,7 +613,7 @@ export default function GanttPage() {
       {/* Task drawer */}
       <div className={`fixed inset-y-0 right-0 w-96 bg-white border-l border-gray-200 shadow-2xl z-30 transition-transform duration-200 no-print ${drawerOpen ? 'translate-x-0' : 'translate-x-full'}`}>
         {selectedTask && (
-          <TaskDrawer key={selectedTask.id} task={selectedTask} tasks={sortedTasks}
+          <TaskDrawer key={selectedTask.id} task={selectedTask} tasks={renderedTasks}
             displayNumber={displayNumbers.get(selectedTask.id) || ''}
             saturdayWork={Boolean(project?.saturdayWork)}
             onClose={() => setDrawerOpen(false)}
