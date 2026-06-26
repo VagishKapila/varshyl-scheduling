@@ -21,7 +21,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         startDate: new Date(t.startDate),
         finishDate: new Date(t.finishDate),
       })),
-      revision.project.saturdayWork
+      revision.project.saturdayWork,
+      new Date(revision.project.startDate),
     )
 
     for (const t of recalculated) {

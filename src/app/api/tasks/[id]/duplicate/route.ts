@@ -14,7 +14,7 @@ function taskCopyData(source: any, overrides: Record<string, unknown> = {}) {
     startDate: source.startDate,
     finishDate: source.finishDate,
     relationshipType: source.relationshipType,
-    predecessorTaskId: null as string | null,
+    predecessorTaskId: source.predecessorTaskId as string | null,
     lagDays: source.lagDays,
     color: source.color,
     responsibleParty: source.responsibleParty,
@@ -24,6 +24,14 @@ function taskCopyData(source: any, overrides: Record<string, unknown> = {}) {
     isMilestone: source.isMilestone,
     ...overrides,
   }
+}
+
+function remapPredecessor(
+  predecessorTaskId: string | null,
+  idMap: Map<string, string>,
+): string | null {
+  if (!predecessorTaskId) return null
+  return idMap.get(predecessorTaskId) ?? predecessorTaskId
 }
 
 export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
@@ -47,21 +55,24 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
       data: { sortOrder: { increment: blockSize } },
     })
 
+    const idMap = new Map<string, string>()
+
     const newParent = await prisma.scheduleTask.create({
       data: taskCopyData(original, {
         parentTaskId: original.parentTaskId,
         sortOrder: insertSort,
+        predecessorTaskId: original.predecessorTaskId,
       }),
     })
+    idMap.set(original.id, newParent.id)
 
-    const idMap = new Map<string, string>([[original.id, newParent.id]])
     const createdChildren = []
-
     for (const child of children) {
       const newChild = await prisma.scheduleTask.create({
         data: taskCopyData(child, {
           parentTaskId: newParent.id,
           sortOrder: child.sortOrder + 1,
+          predecessorTaskId: remapPredecessor(child.predecessorTaskId, idMap),
         }),
       })
       idMap.set(child.id, newChild.id)

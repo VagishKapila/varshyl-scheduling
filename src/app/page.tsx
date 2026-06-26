@@ -109,8 +109,9 @@ export default function DashboardPage() {
             </Link>
           </div>
         ) : (
+          <>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {projects.map(p => {
+            {active.map(p => {
               const rev = p.revisions?.[0]
               return (
                 <div key={p.id} className="bg-white rounded-xl border border-gray-200 p-5 hover:border-gray-400 transition-all hover:shadow-sm">
@@ -150,6 +151,36 @@ export default function DashboardPage() {
               )
             })}
           </div>
+          {archived.length > 0 && (
+            <div className="mt-10">
+              <h2 className="text-lg font-bold text-gray-700 mb-4">Archived</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {archived.map(p => {
+                  const rev = p.revisions?.[0]
+                  return (
+                    <div key={p.id} className="bg-gray-50 rounded-xl border border-gray-200 p-5 opacity-80">
+                      <div className="flex items-start justify-between mb-3">
+                        <div>
+                          <h3 className="font-bold text-gray-700 text-base">{p.name}</h3>
+                          <p className="text-sm text-gray-500">{p.clientName}</p>
+                        </div>
+                        <span className="text-xs px-2 py-1 rounded-full font-semibold bg-gray-200 text-gray-600">Archived</span>
+                      </div>
+                      {rev && (
+                        <div className="text-xs text-gray-500 mb-3">
+                          Latest: <span className="font-semibold">{rev.revisionName}</span>
+                        </div>
+                      )}
+                      <Link href={`/projects/${p.id}`}>
+                        <button className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-300 text-gray-600 hover:bg-white">View</button>
+                      </Link>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+          </>
         )}
       </main>
     </div>

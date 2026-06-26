@@ -114,6 +114,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         finishDate: new Date(t.finishDate),
       })),
       project.saturdayWork,
+      new Date(project.startDate),
     )
 
     const finalTasks = []

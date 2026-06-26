@@ -3,6 +3,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { format, addDays, differenceInCalendarDays, startOfWeek, startOfMonth, startOfQuarter, startOfYear } from 'date-fns'
+import { finishFromStart } from '@/lib/scheduling'
 
 const COLOR_MAP: Record<string, string> = {
   blue: '#2458ff', red: '#d71920', green: '#138a36',
@@ -244,6 +245,7 @@ export default function GanttPage() {
     await fetch(`/api/tasks/${id}`, { method: 'DELETE' })
     setDrawerOpen(false)
     setSelectedTask(null)
+    await fetch(`/api/revisions/${revisionId}/recalculate`, { method: 'POST' })
     await loadRevision()
   }
 
@@ -260,6 +262,7 @@ export default function GanttPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ taskIds }),
     })
+    await fetch(`/api/revisions/${revisionId}/recalculate`, { method: 'POST' })
     await loadRevision()
   }
 
@@ -310,6 +313,7 @@ export default function GanttPage() {
     let x1: number, x2: number
     if (rel === 'SS') { x1 = predGeo.left; x2 = succGeo.left }
     else if (rel === 'FF') { x1 = predGeo.right; x2 = succGeo.right }
+    else if (rel === 'SF') { x1 = predGeo.left; x2 = succGeo.right }
     else { x1 = predGeo.right; x2 = succGeo.left }
     const y1 = predGeo.y
     const y2 = succGeo.y
@@ -562,6 +566,7 @@ export default function GanttPage() {
         {selectedTask && (
           <TaskDrawer key={selectedTask.id} task={selectedTask} tasks={sortedTasks}
             displayNumber={displayNumbers.get(selectedTask.id) || ''}
+            saturdayWork={Boolean(project?.saturdayWork)}
             onClose={() => setDrawerOpen(false)}
             onSave={saveTask}
             onDelete={deleteTask}
@@ -594,15 +599,37 @@ export default function GanttPage() {
 }
 
 // Task Drawer
-function TaskDrawer({ task, tasks, displayNumber, onClose, onSave, onDelete, onDuplicate }: {
-  task: Task; tasks: Task[]; displayNumber: string; onClose: () => void
+function TaskDrawer({ task, tasks, displayNumber, saturdayWork, onClose, onSave, onDelete, onDuplicate }: {
+  task: Task; tasks: Task[]; displayNumber: string; saturdayWork: boolean; onClose: () => void
   onSave: (id: string, data: Partial<Task>) => Promise<void>
   onDelete: (id: string) => void
   onDuplicate: (id: string) => void
 }) {
   const [form, setForm] = useState({ ...task })
   const [saving, setSaving] = useState(false)
-  const set = (k: string, v: any) => setForm(f => ({ ...f, [k]: v }))
+
+  function patchForm(updates: Partial<Task>) {
+    setForm(f => ({ ...f, ...updates }))
+  }
+
+  function updateDuration(dur: number) {
+    setForm(f => {
+      const durationDays = Math.max(0, dur)
+      if (f.relationshipType === 'Manual') return { ...f, durationDays }
+      const finish = finishFromStart(new Date(f.startDate), durationDays || 1, saturdayWork)
+      return { ...f, durationDays, finishDate: format(finish, 'yyyy-MM-dd') }
+    })
+  }
+
+  function updateStartDate(startStr: string) {
+    setForm(f => {
+      if (f.relationshipType === 'Manual') return { ...f, startDate: startStr }
+      const finish = finishFromStart(new Date(startStr), f.durationDays || 1, saturdayWork)
+      return { ...f, startDate: startStr, finishDate: format(finish, 'yyyy-MM-dd') }
+    })
+  }
+
+  const set = (k: string, v: any) => patchForm({ [k]: v })
   const otherTasks = tasks.filter(t => t.id !== task.id)
   const parentOptions = tasks.filter(t => t.id !== task.id && !t.parentTaskId)
 
@@ -621,7 +648,8 @@ function TaskDrawer({ task, tasks, displayNumber, onClose, onSave, onDelete, onD
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Duration (days)</label>
-            <input type="number" min={0} value={form.durationDays} onChange={e => set('durationDays', Number(e.target.value))}
+            <input type="number" min={0} value={form.durationDays}
+              onChange={e => updateDuration(Number(e.target.value))}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
           </div>
           <div>
@@ -633,7 +661,8 @@ function TaskDrawer({ task, tasks, displayNumber, onClose, onSave, onDelete, onD
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Start Date</label>
-            <input type="date" value={form.startDate?.slice(0,10)} onChange={e => set('startDate', e.target.value)}
+            <input type="date" value={form.startDate?.slice(0,10)}
+              onChange={e => updateStartDate(e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
           </div>
           <div>
@@ -646,7 +675,7 @@ function TaskDrawer({ task, tasks, displayNumber, onClose, onSave, onDelete, onD
           <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Relationship</label>
           <select value={form.relationshipType} onChange={e => set('relationshipType', e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400">
-            {['FS','SS','FF','Manual','Milestone'].map(r => <option key={r} value={r}>{r}</option>)}
+            {['FS','SS','FF','SF','Manual','Milestone'].map(r => <option key={r} value={r}>{r}</option>)}
           </select>
         </div>
         <div>

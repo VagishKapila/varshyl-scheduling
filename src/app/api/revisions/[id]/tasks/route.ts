@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { autoColor, addWorkingDays } from '@/lib/scheduling'
+import { autoColor, finishFromStart } from '@/lib/scheduling'
 
 async function resolveInsertSort(
   revisionId: string,
@@ -94,7 +94,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const start = new Date(startDate)
     const finish = body.isMilestone
       ? start
-      : addWorkingDays(start, dur - 1, revision.project.saturdayWork)
+      : finishFromStart(start, dur, revision.project.saturdayWork)
     const task = await prisma.scheduleTask.create({
       data: {
         revisionId: params.id,
