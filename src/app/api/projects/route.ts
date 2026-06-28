@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { parseDate } from '@/lib/dates'
 
 export async function GET(req: NextRequest) {
   try {
@@ -39,8 +40,8 @@ export async function POST(req: NextRequest) {
         clientName: clientName.trim(),
         address: (address || '').trim(),
         projectType,
-        startDate: new Date(startDate),
-        targetEndDate: new Date(targetEndDate || startDate),
+        startDate: parseDate(startDate),
+        targetEndDate: parseDate(targetEndDate || startDate),
         permitStatus: permitStatus || 'standard',
         permitDays: Number(permitDays) || 0,
         saturdayWork: Boolean(saturdayWork),

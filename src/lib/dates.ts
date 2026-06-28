@@ -1,36 +1,38 @@
-import { finishFromStart } from './scheduling'
+// Parse a date from API without timezone shift
+export function parseDate(val: string | Date): Date {
+  if (val instanceof Date) return val
+  const s = val.includes('T') ? val.split('T')[0] : val
+  const [y, m, d] = s.split('-').map(Number)
+  return new Date(y, m - 1, d) // local midnight — no UTC shift
+}
 
-/** Parse YYYY-MM-DD (or ISO) as local calendar date — avoids UTC midnight shift. */
-export function parseLocalDate(dateStr: string | Date): Date {
-  if (dateStr instanceof Date) {
-    return new Date(dateStr.getFullYear(), dateStr.getMonth(), dateStr.getDate())
+// Format for display in Gantt rows and drawer
+export function fmt(date: Date): string {
+  return `${date.getMonth() + 1}/${date.getDate()}/${String(date.getFullYear()).slice(2)}`
+}
+
+// Format for HTML date input value="YYYY-MM-DD"
+export function fmtInput(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+// Add N working days (saturdayWork=true counts Saturday)
+export function addWorkingDays(date: Date, days: number, saturdayWork: boolean): Date {
+  if (days === 0) return new Date(date)
+  const dir = days > 0 ? 1 : -1
+  let remaining = Math.abs(days)
+  let current = new Date(date)
+  while (remaining > 0) {
+    current.setDate(current.getDate() + dir)
+    const dow = current.getDay()
+    if (dow === 0) continue // always skip Sunday
+    if (dow === 6 && !saturdayWork) continue // skip Saturday if not working
+    remaining--
   }
-  const [y, m, d] = dateStr.split('T')[0].split('-').map(Number)
-  return new Date(y, m - 1, d)
+  return current
 }
 
-/** yyyy-MM-dd for `<input type="date">`. */
-export function toDateInputValue(date: string | Date): string {
-  const d = parseLocalDate(date)
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
-
-/** M/d/yy display — single source for Gantt rows and drawer labels. */
-export function formatDisplayDate(date: string | Date): string {
-  const d = parseLocalDate(date)
-  const yy = String(d.getFullYear()).slice(2)
-  return `${d.getMonth() + 1}/${d.getDate()}/${yy}`
-}
-
-/** Client-side finish from start + duration, respecting saturdayWork. */
-export function finishFromStartLocal(
-  start: string | Date,
-  durationDays: number,
-  saturdayWork: boolean,
-): Date {
-  const days = Math.max(1, durationDays || 1)
-  return finishFromStart(parseLocalDate(start), days, saturdayWork)
+// Calc finish from start + duration
+export function calcFinish(start: Date, durationDays: number, saturdayWork: boolean): Date {
+  return addWorkingDays(start, Math.max(1, durationDays) - 1, saturdayWork)
 }

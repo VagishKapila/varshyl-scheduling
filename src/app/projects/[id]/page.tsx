@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { format } from 'date-fns'
-import { parseLocalDate, toDateInputValue } from '@/lib/dates'
+import { parseDate, fmtInput } from '@/lib/dates'
 
 export default function ProjectPage() {
   const params = useParams()
@@ -26,8 +26,8 @@ export default function ProjectPage() {
         setProject(d.data)
         if (d.data) {
           setEditForm({
-            startDate: toDateInputValue(d.data.startDate),
-            targetEndDate: toDateInputValue(d.data.targetEndDate),
+            startDate: fmtInput(parseDate(d.data.startDate)),
+            targetEndDate: fmtInput(parseDate(d.data.targetEndDate)),
             saturdayWork: Boolean(d.data.saturdayWork),
           })
         }
@@ -48,7 +48,7 @@ export default function ProjectPage() {
     setSaving(true)
     setEditError('')
     try {
-      const prevStart = project ? toDateInputValue(project.startDate) : ''
+      const prevStart = project ? fmtInput(parseDate(project.startDate)) : ''
       const res = await fetch(`/api/projects/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -138,8 +138,8 @@ export default function ProjectPage() {
               </>
             ) : (
               [
-                ['Start', format(parseLocalDate(project.startDate), 'MMM d, yyyy')],
-                ['Target End', format(parseLocalDate(project.targetEndDate), 'MMM d, yyyy')],
+                ['Start', format(parseDate(project.startDate), 'MMM d, yyyy')],
+                ['Target End', format(parseDate(project.targetEndDate), 'MMM d, yyyy')],
                 ['Permit', project.permitStatus],
                 ['Saturday Work', project.saturdayWork ? 'Yes' : 'No'],
               ].map(([k, v]) => (

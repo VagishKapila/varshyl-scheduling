@@ -3,7 +3,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { format, addDays, differenceInCalendarDays, startOfWeek, startOfMonth, startOfQuarter, startOfYear } from 'date-fns'
-import { parseLocalDate, toDateInputValue, formatDisplayDate, finishFromStartLocal } from '@/lib/dates'
+import { parseDate, fmt, fmtInput, calcFinish } from '@/lib/dates'
 
 const COLOR_MAP: Record<string, string> = {
   blue: '#2458ff', red: '#d71920', green: '#138a36',
@@ -107,15 +107,15 @@ function getBarDates(task: Task, tasks: Task[]): { start: Date; finish: Date } {
   if (hasChildren(tasks, task.id)) {
     const children = tasks.filter(t => t.parentTaskId === task.id)
     return {
-      start: new Date(Math.min(...children.map(c => parseLocalDate(c.startDate).getTime()))),
-      finish: new Date(Math.max(...children.map(c => parseLocalDate(c.finishDate).getTime()))),
+      start: new Date(Math.min(...children.map(c => parseDate(c.startDate).getTime()))),
+      finish: new Date(Math.max(...children.map(c => parseDate(c.finishDate).getTime()))),
     }
   }
-  return { start: parseLocalDate(task.startDate), finish: parseLocalDate(task.finishDate) }
+  return { start: parseDate(task.startDate), finish: parseDate(task.finishDate) }
 }
 
 function dayOffsetFrom(date: Date | string, ganttStart: Date) {
-  return differenceInCalendarDays(parseLocalDate(date), ganttStart)
+  return differenceInCalendarDays(parseDate(date), ganttStart)
 }
 
 function getTaskBarGeometry(
@@ -244,14 +244,14 @@ export default function GanttPage() {
   const COL_PX = scaleConfig.colPx
 
   const today = new Date()
-  const minDate = tasks.length ? new Date(Math.min(...tasks.map(t => parseLocalDate(t.startDate).getTime()))) : today
-  const maxDate = tasks.length ? new Date(Math.max(...tasks.map(t => new Date(t.finishDate).getTime()))) : addDays(today, 90)
+  const minDate = tasks.length ? new Date(Math.min(...tasks.map(t => parseDate(t.startDate).getTime()))) : today
+  const maxDate = tasks.length ? new Date(Math.max(...tasks.map(t => parseDate(t.finishDate).getTime()))) : addDays(today, 90)
   const ganttStart = startOfWeek(addDays(minDate, -7))
   const ganttEnd = addDays(maxDate, 30)
   const totalDays = differenceInCalendarDays(ganttEnd, ganttStart)
 
   function dayOffset(date: Date | string) {
-    return differenceInCalendarDays(new Date(date), ganttStart)
+    return differenceInCalendarDays(parseDate(date), ganttStart)
   }
 
   // Build date header ticks for current scale
@@ -545,8 +545,8 @@ export default function GanttPage() {
                       </span>
                     </span>
                     <span className="text-gray-500 text-center">{task.durationDays}d</span>
-                    <span className="text-gray-500">{formatDisplayDate(barDates.start)}</span>
-                    <span className="text-gray-500">{formatDisplayDate(barDates.finish)}</span>
+                    <span className="text-gray-500">{fmt(barDates.start)}</span>
+                    <span className="text-gray-500">{fmt(barDates.finish)}</span>
                     <span className="text-gray-400 truncate">{task.responsibleParty || ''}</span>
                   </div>
                 </div>
@@ -654,42 +654,50 @@ function TaskDrawer({ task, tasks, displayNumber, saturdayWork, onClose, onSave,
   onDelete: (id: string) => void
   onDuplicate: (id: string) => void
 }) {
-  const [form, setForm] = useState(() => ({
-    ...task,
-    startDate: toDateInputValue(task.startDate),
-    finishDate: toDateInputValue(task.finishDate),
-  }))
+  const [meta, setMeta] = useState({
+    name: task.name,
+    lagDays: task.lagDays,
+    relationshipType: task.relationshipType,
+    predecessorTaskId: task.predecessorTaskId,
+    parentTaskId: task.parentTaskId,
+    color: task.color,
+    responsibleParty: task.responsibleParty || '',
+    notes: task.notes || '',
+    isPermitRelated: task.isPermitRelated,
+    isCritical: task.isCritical,
+    isMilestone: task.isMilestone,
+  })
   const [saving, setSaving] = useState(false)
-  const isManual = form.relationshipType === 'Manual'
-  const isMilestone = form.relationshipType === 'Milestone'
 
-  function patchForm(updates: Partial<Task>) {
-    setForm(f => ({ ...f, ...updates }))
-  }
+  const [startDate, setStartDate] = useState(() => parseDate(task.startDate))
+  const [duration, setDuration] = useState(() =>
+    task.relationshipType === 'Milestone' || task.isMilestone
+      ? task.durationDays
+      : Math.max(1, task.durationDays),
+  )
+  const [manualFinish, setManualFinish] = useState(() => parseDate(task.finishDate))
 
-  function updateDuration(dur: number) {
-    setForm(f => {
-      const durationDays = isMilestone ? Math.max(0, dur) : Math.max(1, dur || 1)
-      if (isManual) return { ...f, durationDays }
-      if (isMilestone) return { ...f, durationDays, finishDate: f.startDate }
-      const finish = finishFromStartLocal(f.startDate, durationDays, saturdayWork)
-      return { ...f, durationDays, finishDate: toDateInputValue(finish) }
-    })
-  }
+  const isManual = meta.relationshipType === 'Manual'
+  const isMilestone = meta.relationshipType === 'Milestone' || meta.isMilestone
 
-  function updateStartDate(startStr: string) {
-    setForm(f => {
-      if (isManual) return { ...f, startDate: startStr }
-      if (isMilestone) return { ...f, startDate: startStr, finishDate: startStr }
-      const durationDays = Math.max(1, f.durationDays || 1)
-      const finish = finishFromStartLocal(startStr, durationDays, saturdayWork)
-      return { ...f, startDate: startStr, finishDate: toDateInputValue(finish) }
-    })
-  }
+  const finishDate = isManual
+    ? manualFinish
+    : isMilestone
+      ? startDate
+      : calcFinish(startDate, duration, saturdayWork)
 
-  const set = (k: string, v: any) => patchForm({ [k]: v })
+  const setMetaField = (k: string, v: unknown) => setMeta(m => ({ ...m, [k]: v }))
   const otherTasks = tasks.filter(t => t.id !== task.id)
   const parentOptions = tasks.filter(t => t.id !== task.id && !t.parentTaskId)
+
+  const onDurationChange = (val: string) => {
+    const d = isMilestone ? Math.max(0, parseInt(val) || 0) : Math.max(1, parseInt(val) || 1)
+    setDuration(d)
+  }
+
+  const onStartChange = (val: string) => {
+    setStartDate(parseDate(val))
+  }
 
   return (
     <div className="h-full flex flex-col">
@@ -700,50 +708,53 @@ function TaskDrawer({ task, tasks, displayNumber, saturdayWork, onClose, onSave,
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         <div>
           <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Task Name</label>
-          <input value={form.name} onChange={e => set('name', e.target.value)}
+          <input value={meta.name} onChange={e => setMetaField('name', e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Duration (days)</label>
-            <input type="number" min={isMilestone ? 0 : 1} value={form.durationDays}
-              onChange={e => updateDuration(Number(e.target.value))}
+            <input type="number" min={isMilestone ? 0 : 1} value={duration}
+              onChange={e => onDurationChange(e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Lag Days</label>
-            <input type="number" value={form.lagDays} onChange={e => set('lagDays', Number(e.target.value))}
+            <input type="number" value={meta.lagDays} onChange={e => setMetaField('lagDays', Number(e.target.value))}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
           </div>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Start Date</label>
-            <input type="date" value={form.startDate}
-              onChange={e => updateStartDate(e.target.value)}
+            <input type="date" value={fmtInput(startDate)}
+              onChange={e => onStartChange(e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
               Finish Date{!isManual && <span className="normal-case font-normal text-gray-400"> (calculated)</span>}
             </label>
-            <input type="date" value={form.finishDate}
-              readOnly={!isManual}
-              disabled={!isManual}
-              onChange={e => isManual && set('finishDate', e.target.value)}
-              className={`w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 ${!isManual ? 'bg-gray-50 text-gray-600 cursor-default' : ''}`} />
+            {isManual ? (
+              <input type="date" value={fmtInput(manualFinish)}
+                onChange={e => setManualFinish(parseDate(e.target.value))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+            ) : (
+              <input type="text" value={fmt(finishDate)} readOnly
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 text-gray-500 cursor-not-allowed" />
+            )}
           </div>
         </div>
         <div>
           <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Relationship</label>
-          <select value={form.relationshipType} onChange={e => set('relationshipType', e.target.value)}
+          <select value={meta.relationshipType} onChange={e => setMetaField('relationshipType', e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400">
             {['FS','SS','FF','SF','Manual','Milestone'].map(r => <option key={r} value={r}>{r}</option>)}
           </select>
         </div>
         <div>
           <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Predecessor</label>
-          <select value={form.predecessorTaskId || ''} onChange={e => set('predecessorTaskId', e.target.value || null)}
+          <select value={meta.predecessorTaskId || ''} onChange={e => setMetaField('predecessorTaskId', e.target.value || null)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400">
             <option value="">None</option>
             {otherTasks.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
@@ -751,7 +762,7 @@ function TaskDrawer({ task, tasks, displayNumber, saturdayWork, onClose, onSave,
         </div>
         <div>
           <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Nest under (optional)</label>
-          <select value={form.parentTaskId || ''} onChange={e => set('parentTaskId', e.target.value || null)}
+          <select value={meta.parentTaskId || ''} onChange={e => setMetaField('parentTaskId', e.target.value || null)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400">
             <option value="">None — top level</option>
             {parentOptions.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
@@ -761,21 +772,21 @@ function TaskDrawer({ task, tasks, displayNumber, saturdayWork, onClose, onSave,
           <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Color</label>
           <div className="flex gap-2">
             {Object.entries({ blue:'#2458ff', red:'#d71920', green:'#138a36', teal:'#168c9a', purple:'#7a3cff', black:'#111' }).map(([k,v]) => (
-              <button key={k} onClick={() => set('color', k)}
-                className={`w-7 h-7 rounded-full transition-all ${form.color===k ? 'ring-2 ring-offset-2 ring-gray-400 scale-110' : ''}`}
+              <button key={k} onClick={() => setMetaField('color', k)}
+                className={`w-7 h-7 rounded-full transition-all ${meta.color===k ? 'ring-2 ring-offset-2 ring-gray-400 scale-110' : ''}`}
                 style={{background:v}} />
             ))}
           </div>
         </div>
         <div>
           <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Responsible Party</label>
-          <input value={form.responsibleParty || ''} onChange={e => set('responsibleParty', e.target.value)}
+          <input value={meta.responsibleParty} onChange={e => setMetaField('responsibleParty', e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
             placeholder="GC, Electrical, Plumbing…" />
         </div>
         <div>
           <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Notes</label>
-          <textarea value={form.notes || ''} onChange={e => set('notes', e.target.value)} rows={2}
+          <textarea value={meta.notes} onChange={e => setMetaField('notes', e.target.value)} rows={2}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 resize-none" />
         </div>
         <div className="flex gap-4">
@@ -785,7 +796,7 @@ function TaskDrawer({ task, tasks, displayNumber, saturdayWork, onClose, onSave,
             { key: 'isMilestone', label: 'Milestone' },
           ].map(tog => (
             <label key={tog.key} className="flex items-center gap-2 cursor-pointer text-sm text-gray-700">
-              <input type="checkbox" checked={(form as any)[tog.key]} onChange={e => set(tog.key, e.target.checked)}
+              <input type="checkbox" checked={(meta as any)[tog.key]} onChange={e => setMetaField(tog.key, e.target.checked)}
                 className="rounded" />
               {tog.label}
             </label>
@@ -804,7 +815,12 @@ function TaskDrawer({ task, tasks, displayNumber, saturdayWork, onClose, onSave,
           onClick={async () => {
             setSaving(true)
             try {
-              await onSave(task.id, form)
+              await onSave(task.id, {
+                ...meta,
+                durationDays: duration,
+                startDate: fmtInput(startDate),
+                finishDate: fmtInput(finishDate),
+              })
               onClose()
             } finally {
               setSaving(false)

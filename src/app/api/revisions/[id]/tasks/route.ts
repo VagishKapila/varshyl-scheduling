@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { autoColor, finishFromStart } from '@/lib/scheduling'
+import { autoColor } from '@/lib/scheduling'
+import { parseDate, calcFinish } from '@/lib/dates'
 
 async function resolveInsertSort(
   revisionId: string,
@@ -90,11 +91,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       data: { sortOrder: { increment: 1 } },
     })
 
-    const dur = Number(durationDays) || 1
-    const start = new Date(startDate)
+    const dur = Math.max(1, Number(durationDays) || 1)
+    const start = parseDate(startDate)
     const finish = body.isMilestone
       ? start
-      : finishFromStart(start, dur, revision.project.saturdayWork)
+      : calcFinish(start, dur, revision.project.saturdayWork)
     const task = await prisma.scheduleTask.create({
       data: {
         revisionId: params.id,
@@ -130,8 +131,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const results = []
     for (const update of body) {
       const { id, ...data } = update
-      if (data.startDate) data.startDate = new Date(data.startDate)
-      if (data.finishDate) data.finishDate = new Date(data.finishDate)
+      if (data.startDate) data.startDate = parseDate(data.startDate)
+      if (data.finishDate) data.finishDate = parseDate(data.finishDate)
       const t = await prisma.scheduleTask.update({ where: { id }, data })
       results.push(t)
     }

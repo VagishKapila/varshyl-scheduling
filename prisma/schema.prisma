@@ -92,6 +92,18 @@ model ScheduleTask {
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
   revision          ScheduleRevision @relation(fields: [revisionId], references: [id])
+  lookAheadEntry    LookAheadEntry?
+}
+
+model LookAheadEntry {
+  id          String       @id @default(cuid())
+  taskId      String       @unique
+  trade       String?
+  constraints String?
+  inspections String?
+  materials   String?
+  updatedAt   DateTime     @updatedAt
+  task        ScheduleTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
 }
 
 model Template {

@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { generateScheduleFromTemplate, autoColor, recalculateDates } from '@/lib/scheduling'
+import { parseDate } from '@/lib/dates'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
@@ -69,7 +70,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     const generatedTasks = generateScheduleFromTemplate(
       adjustedTasks,
-      new Date(project.startDate),
+      parseDate(project.startDate),
       project.saturdayWork,
     ) as any[]
 
@@ -103,24 +104,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       insertedTasks.push(created)
     }
 
-    const recalculated = recalculateDates(
-      insertedTasks.map(t => ({
-        ...t,
-        startDate: new Date(t.startDate),
-        finishDate: new Date(t.finishDate),
-      })),
-      project.saturdayWork,
-      new Date(project.startDate),
-    )
-
-    const finalTasks = []
-    for (const t of recalculated) {
-      const updated = await prisma.scheduleTask.update({
-        where: { id: t.id },
-        data: { startDate: t.startDate, finishDate: t.finishDate },
-      })
-      finalTasks.push(updated)
-    }
+    await recalculateDates(revision.id, project.saturdayWork)
+    const finalTasks = await prisma.scheduleTask.findMany({
+      where: { revisionId: revision.id },
+      orderBy: { sortOrder: 'asc' },
+    })
 
     await prisma.project.update({ where: { id: project.id }, data: { updatedAt: new Date() } })
 

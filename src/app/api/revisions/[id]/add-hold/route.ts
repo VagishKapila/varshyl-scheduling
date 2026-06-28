@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { addWorkingDays } from '@/lib/scheduling'
+import { addWorkingDays, parseDate } from '@/lib/dates'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
@@ -21,8 +21,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const afterTask = revision.tasks.find((t: any) => t.id === insertAfterTaskId)
     if (!afterTask) return NextResponse.json({ error: 'Task not found' }, { status: 404 })
 
-    const holdStart = afterTask.finishDate
-    const holdFinish = addWorkingDays(new Date(holdStart), durationDays, revision.project.saturdayWork)
+    const holdStart = parseDate(afterTask.finishDate)
+    const holdFinish = addWorkingDays(holdStart, durationDays, revision.project.saturdayWork)
 
     // Insert hold task
     const maxSort = Math.max(...revision.tasks.map((t: any) => t.sortOrder))
@@ -31,7 +31,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         revisionId: params.id,
         name: holdName || 'Hold',
         durationDays,
-        startDate: new Date(holdStart),
+        startDate: holdStart,
         finishDate: holdFinish,
         level: afterTask.level,
         sortOrder: afterTask.sortOrder + 1,
@@ -48,8 +48,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     if (shiftMode !== 'none') {
       const downstream = revision.tasks.filter((t: any) => t.sortOrder > afterTask.sortOrder)
       for (const t of downstream) {
-        const newStart = addWorkingDays(new Date(t.startDate), durationDays, revision.project.saturdayWork)
-        const newFinish = addWorkingDays(new Date(t.finishDate), durationDays, revision.project.saturdayWork)
+        const newStart = addWorkingDays(parseDate(t.startDate), durationDays, revision.project.saturdayWork)
+        const newFinish = addWorkingDays(parseDate(t.finishDate), durationDays, revision.project.saturdayWork)
         await prisma.scheduleTask.update({
           where: { id: t.id },
           data: { startDate: newStart, finishDate: newFinish },

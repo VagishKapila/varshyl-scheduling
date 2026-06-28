@@ -90,27 +90,7 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
       createdChildren.push(newChild)
     }
 
-    const allTasks = await prisma.scheduleTask.findMany({
-      where: { revisionId: original.revisionId },
-      orderBy: { sortOrder: 'asc' },
-    })
-
-    const recalculated = recalculateDates(
-      allTasks.map(t => ({
-        ...t,
-        startDate: new Date(t.startDate),
-        finishDate: new Date(t.finishDate),
-      })),
-      revision.project.saturdayWork,
-      new Date(revision.project.startDate),
-    )
-
-    for (const t of recalculated) {
-      await prisma.scheduleTask.update({
-        where: { id: t.id },
-        data: { startDate: t.startDate, finishDate: t.finishDate },
-      })
-    }
+    await recalculateDates(original.revisionId, revision.project.saturdayWork)
 
     return NextResponse.json({
       data: { parent: newParent, children: createdChildren, taskCount: 1 + createdChildren.length },

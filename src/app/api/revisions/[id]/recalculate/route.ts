@@ -11,28 +11,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     const revision = await prisma.scheduleRevision.findUnique({
       where: { id: params.id },
-      include: { tasks: { orderBy: { sortOrder: 'asc' } }, project: true },
+      include: { project: true },
     })
     if (!revision) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-    const recalculated = recalculateDates(
-      revision.tasks.map((t: any) => ({
-        ...t,
-        startDate: new Date(t.startDate),
-        finishDate: new Date(t.finishDate),
-      })),
-      revision.project.saturdayWork,
-      new Date(revision.project.startDate),
-    )
-
-    for (const t of recalculated) {
-      await prisma.scheduleTask.update({
-        where: { id: t.id },
-        data: { startDate: t.startDate, finishDate: t.finishDate },
-      })
-    }
-
-    return NextResponse.json({ data: recalculated })
+    const tasks = await recalculateDates(params.id, revision.project.saturdayWork)
+    return NextResponse.json({ data: tasks })
   } catch (e: any) {
     console.error('[POST recalculate]', e.message)
     return NextResponse.json({ error: 'Recalculation failed' }, { status: 500 })

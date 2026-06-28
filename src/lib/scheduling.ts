@@ -1,89 +1,5 @@
-import { addDays, isSaturday, isSunday, startOfDay } from 'date-fns'
-
-export interface TaskLike {
-  id: string
-  sortOrder: number
-  level: number
-  startDate: Date
-  finishDate: Date
-  durationDays: number
-  relationshipType: string
-  predecessorTaskId: string | null
-  lagDays: number
-  isMilestone: boolean
-  parentTaskId: string | null
-}
-
-function atMidnight(d: Date): Date {
-  return startOfDay(new Date(d))
-}
-
-export function isWorkingDay(date: Date, saturdayWork = false): boolean {
-  if (isSunday(date)) return false
-  if (isSaturday(date) && !saturdayWork) return false
-  return true
-}
-
-/** Snap to nearest working day on or after date. */
-export function normalizeWorkingDay(date: Date, saturdayWork = false): Date {
-  let d = atMidnight(date)
-  while (!isWorkingDay(d, saturdayWork)) {
-    d = addDays(d, 1)
-  }
-  return d
-}
-
-export function addWorkingDays(start: Date, days: number, saturdayWork = false): Date {
-  if (days === 0) return atMidnight(new Date(start))
-  if (days < 0) return subtractWorkingDays(start, -days, saturdayWork)
-
-  let current = atMidnight(start)
-  let remaining = days
-  const direction = 1
-  while (remaining > 0) {
-    current = addDays(current, direction)
-    const dow = current.getDay()
-    const isWeekend = dow === 0 || (!saturdayWork && dow === 6)
-    if (!isWeekend) remaining--
-  }
-  return current
-}
-
-export function subtractWorkingDays(finish: Date, days: number, saturdayWork = false): Date {
-  if (days === 0) return atMidnight(new Date(finish))
-  if (days < 0) return addWorkingDays(finish, -days, saturdayWork)
-
-  let current = atMidnight(finish)
-  let remaining = days
-  const direction = -1
-  while (remaining > 0) {
-    current = addDays(current, direction)
-    const dow = current.getDay()
-    const isWeekend = dow === 0 || (!saturdayWork && dow === 6)
-    if (!isWeekend) remaining--
-  }
-  return current
-}
-
-export function nextWorkingDay(date: Date, saturdayWork = false): Date {
-  let d = atMidnight(date)
-  if (isWorkingDay(d, saturdayWork)) return d
-  return normalizeWorkingDay(addDays(d, 1), saturdayWork)
-}
-
-export function finishFromStart(start: Date, durationDays: number, saturdayWork = false): Date {
-  const base = atMidnight(new Date(start))
-  if (durationDays <= 0) return base
-  if (durationDays === 1) return base
-  return addWorkingDays(base, durationDays - 1, saturdayWork)
-}
-
-export function snapToProjectStart(date: Date, projectStart: Date, saturdayWork = false): Date {
-  const floor = normalizeWorkingDay(projectStart, saturdayWork)
-  const d = normalizeWorkingDay(date, saturdayWork)
-  if (d.getTime() < floor.getTime()) return floor
-  return d
-}
+import { prisma } from '@/lib/prisma'
+import { parseDate, addWorkingDays, calcFinish } from '@/lib/dates'
 
 export function autoColor(name: string): string {
   const lower = name.toLowerCase()
@@ -93,172 +9,151 @@ export function autoColor(name: string): string {
   return 'blue'
 }
 
-/**
- * Microsoft Project–style dependency math.
- * Duration is working days; finish = start + (duration - 1) working days.
- */
-export function calcTaskDates(
-  task: TaskLike,
-  predecessor: TaskLike | null,
-  saturdayWork = false,
-  projectStart?: Date,
+type TaskRecord = {
+  id: string
+  sortOrder: number
+  durationDays: number
+  startDate: Date | string
+  finishDate: Date | string
+  relationshipType: string
+  predecessorTaskId: string | null
+  lagDays: number
+  isMilestone?: boolean
+  parentTaskId?: string | null
+  level?: number
+  name?: string
+}
+
+/** Pure date math for one task given its predecessor (or null). */
+export function computeTaskDates(
+  task: TaskRecord,
+  pred: TaskRecord | null,
+  saturdayWork: boolean,
 ): { startDate: Date; finishDate: Date } {
   const rel = task.relationshipType || 'FS'
   const lag = task.lagDays ?? 0
   const isMil = task.isMilestone || rel === 'Milestone'
-  const dur = isMil ? 0 : Math.max(task.durationDays, 1)
 
-  if (rel === 'Manual' || !predecessor) {
-    let start = normalizeWorkingDay(new Date(task.startDate), saturdayWork)
-    let finish = isMil ? start : finishFromStart(start, dur, saturdayWork)
-    if (projectStart) {
-      start = snapToProjectStart(start, projectStart, saturdayWork)
-      finish = isMil ? start : finishFromStart(start, dur, saturdayWork)
-    }
+  if (!pred) {
+    const start = parseDate(task.startDate)
+    const finish = isMil ? start : calcFinish(start, task.durationDays, saturdayWork)
     return { startDate: start, finishDate: finish }
   }
 
-  const predStart = normalizeWorkingDay(predecessor.startDate, saturdayWork)
-  const predFinish = normalizeWorkingDay(predecessor.finishDate, saturdayWork)
-
-  if (rel === 'Milestone' || isMil) {
-    const milestoneDate = snapToProjectStart(
-      addWorkingDays(predFinish, lag, saturdayWork),
-      projectStart ?? predStart,
-      saturdayWork,
-    )
-    return { startDate: milestoneDate, finishDate: milestoneDate }
-  }
-
+  const pStart = parseDate(pred.startDate)
+  const pFinish = parseDate(pred.finishDate)
   let start: Date
   let finish: Date
 
   switch (rel) {
-    case 'FS': {
-      start = addWorkingDays(predFinish, lag, saturdayWork)
-      finish = dur <= 1 ? start : finishFromStart(start, dur, saturdayWork)
+    case 'FS':
+      start = addWorkingDays(pFinish, 1 + lag, saturdayWork)
+      finish = isMil ? start : calcFinish(start, task.durationDays, saturdayWork)
       break
-    }
-    case 'SS': {
-      start = addWorkingDays(predStart, lag, saturdayWork)
-      finish = dur <= 1 ? start : finishFromStart(start, dur, saturdayWork)
+    case 'SS':
+      start = addWorkingDays(pStart, lag, saturdayWork)
+      finish = isMil ? start : calcFinish(start, task.durationDays, saturdayWork)
       break
-    }
-    case 'FF': {
-      finish = addWorkingDays(predFinish, lag, saturdayWork)
-      start = dur <= 1 ? finish : subtractWorkingDays(finish, dur - 1, saturdayWork)
+    case 'FF':
+      finish = addWorkingDays(pFinish, lag, saturdayWork)
+      start = isMil
+        ? finish
+        : addWorkingDays(finish, -(Math.max(1, task.durationDays) - 1), saturdayWork)
       break
-    }
-    case 'SF': {
-      finish = addWorkingDays(predStart, lag, saturdayWork)
-      start = dur <= 1 ? finish : subtractWorkingDays(finish, dur - 1, saturdayWork)
+    case 'SF':
+      finish = addWorkingDays(pStart, lag, saturdayWork)
+      start = isMil
+        ? finish
+        : addWorkingDays(finish, -(Math.max(1, task.durationDays) - 1), saturdayWork)
       break
-    }
-    default: {
-      start = addWorkingDays(predFinish, lag, saturdayWork)
-      finish = dur <= 1 ? start : finishFromStart(start, dur, saturdayWork)
-    }
+    case 'Milestone':
+      start = addWorkingDays(pFinish, 1 + lag, saturdayWork)
+      finish = start
+      break
+    default:
+      start = addWorkingDays(pFinish, 1 + lag, saturdayWork)
+      finish = calcFinish(start, task.durationDays, saturdayWork)
   }
 
-  if (projectStart) {
-    start = snapToProjectStart(start, projectStart, saturdayWork)
-    finish = isMil ? start : finishFromStart(start, dur, saturdayWork)
-  }
-
-  return {
-    startDate: normalizeWorkingDay(start, saturdayWork),
-    finishDate: normalizeWorkingDay(finish, saturdayWork),
-  }
+  return { startDate: start, finishDate: finish }
 }
 
-/** @deprecated Use calcTaskDates */
-export function calcSuccessorDates(
-  predecessor: TaskLike,
-  successor: TaskLike,
-  saturdayWork = false,
-): { startDate: Date; finishDate: Date } {
-  return calcTaskDates(successor, predecessor, saturdayWork)
-}
+export async function recalculateDates(revisionId: string, saturdayWork: boolean) {
+  const tasks = await prisma.scheduleTask.findMany({
+    where: { revisionId },
+    orderBy: { sortOrder: 'asc' },
+  })
 
-export function recalculateDates(
-  tasks: TaskLike[],
-  saturdayWork = false,
-  projectStart?: Date,
-): TaskLike[] {
-  const sorted = [...tasks].sort((a, b) => a.sortOrder - b.sortOrder)
-  const floor = projectStart ? normalizeWorkingDay(projectStart, saturdayWork) : undefined
-  const byId = new Map(
-    sorted.map(t => [
-      t.id,
-      {
-        ...t,
-        startDate: atMidnight(new Date(t.startDate)),
-        finishDate: atMidnight(new Date(t.finishDate)),
-      },
-    ]),
+  const map: Record<string, (typeof tasks)[0]> = {}
+  tasks.forEach(t => {
+    map[t.id] = { ...t }
+  })
+
+  const visited = new Set<string>()
+  const ordered: typeof tasks = []
+
+  function visit(task: (typeof tasks)[0]) {
+    if (visited.has(task.id)) return
+    if (task.predecessorTaskId && map[task.predecessorTaskId]) {
+      visit(map[task.predecessorTaskId])
+    }
+    visited.add(task.id)
+    ordered.push(task)
+  }
+  tasks.forEach(visit)
+
+  const updated: Array<{ id: string; startDate: Date; finishDate: Date }> = []
+
+  for (const task of ordered) {
+    if (task.relationshipType === 'Manual') continue
+
+    const pred = task.predecessorTaskId ? map[task.predecessorTaskId] : null
+    const { startDate, finishDate } = computeTaskDates(task, pred, saturdayWork)
+
+    map[task.id] = { ...map[task.id], startDate, finishDate }
+    updated.push({ id: task.id, startDate, finishDate })
+  }
+
+  await Promise.all(
+    updated.map(u =>
+      prisma.scheduleTask.update({
+        where: { id: u.id },
+        data: { startDate: u.startDate, finishDate: u.finishDate },
+      }),
+    ),
   )
 
-  const maxPasses = Math.max(sorted.length * 2, 4)
-  for (let pass = 0; pass < maxPasses; pass++) {
-    let changed = false
-    for (const task of sorted) {
-      const t = byId.get(task.id)!
-
-      // Manual dates are user-set — never overwrite
-      if (task.relationshipType === 'Manual') continue
-
-      const isMil = task.isMilestone || task.relationshipType === 'Milestone'
-      const dur = isMil ? 0 : Math.max(task.durationDays, 1)
-
-      if (!task.predecessorTaskId) {
-        let start = t.startDate
-        if (floor) start = snapToProjectStart(start, floor, saturdayWork)
-        const finish = isMil ? start : finishFromStart(start, dur, saturdayWork)
-        if (start.getTime() !== t.startDate.getTime() || finish.getTime() !== t.finishDate.getTime()) {
-          t.startDate = start
-          t.finishDate = finish
-          byId.set(task.id, t)
-          changed = true
-        }
-        continue
-      }
-
-      const pred = byId.get(task.predecessorTaskId)
-      if (!pred) continue
-
-      const { startDate, finishDate } = calcTaskDates(t, pred, saturdayWork, floor)
-      if (startDate.getTime() !== t.startDate.getTime() || finishDate.getTime() !== t.finishDate.getTime()) {
-        t.startDate = startDate
-        t.finishDate = finishDate
-        byId.set(task.id, t)
-        changed = true
-      }
-    }
-    if (!changed) break
-  }
-
-  const parents = sorted.filter(t => sorted.some(c => c.parentTaskId === t.id))
+  const parents = tasks.filter(t => tasks.some(c => c.parentTaskId === t.id))
   for (const parent of parents) {
-    if (parent.relationshipType === 'Manual') continue
-    const children = sorted.filter(t => t.parentTaskId === parent.id)
-    if (!children.length) continue
-    const p = byId.get(parent.id)!
-    p.startDate = new Date(Math.min(...children.map(c => byId.get(c.id)!.startDate.getTime())))
-    p.finishDate = new Date(Math.max(...children.map(c => byId.get(c.id)!.finishDate.getTime())))
-    byId.set(parent.id, p)
+    const children = tasks.filter(c => c.parentTaskId === parent.id)
+    const childDates = children.map(c => map[c.id] ?? c)
+    const minStart = new Date(
+      Math.min(...childDates.map(c => parseDate(c.startDate).getTime())),
+    )
+    const maxFinish = new Date(
+      Math.max(...childDates.map(c => parseDate(c.finishDate).getTime())),
+    )
+    await prisma.scheduleTask.update({
+      where: { id: parent.id },
+      data: { startDate: minStart, finishDate: maxFinish },
+    })
+    map[parent.id] = { ...map[parent.id], startDate: minStart, finishDate: maxFinish }
   }
 
-  return sorted.map(t => byId.get(t.id)!)
+  return prisma.scheduleTask.findMany({
+    where: { revisionId },
+    orderBy: { sortOrder: 'asc' },
+  })
 }
 
 export function generateScheduleFromTemplate(
   templateTasks: any[],
-  projectStart: Date,
+  projectStart: Date | string,
   saturdayWork = false,
-): Omit<TaskLike, 'id'>[] {
+): Omit<TaskRecord, 'id'>[] {
   const sorted = [...templateTasks].sort((a, b) => a.sortOrder - b.sortOrder)
-  const floor = normalizeWorkingDay(projectStart, saturdayWork)
-  const taskMap = new Map<string, TaskLike>()
+  const floor = parseDate(projectStart)
+  const taskMap = new Map<string, TaskRecord>()
 
   for (const t of sorted) {
     const dur = t.defaultDurationDays || 1
@@ -266,10 +161,11 @@ export function generateScheduleFromTemplate(
       ? taskMap.get(t.predecessorTemplateTaskId) ?? null
       : null
 
-    const stub: TaskLike = {
+    const stub: TaskRecord = {
       id: t.id,
       sortOrder: t.sortOrder,
       level: t.level || 1,
+      name: t.name,
       startDate: floor,
       finishDate: floor,
       durationDays: dur,
@@ -285,9 +181,9 @@ export function generateScheduleFromTemplate(
 
     if (!predecessor) {
       startDate = floor
-      finishDate = t.isMilestone ? floor : finishFromStart(floor, dur, saturdayWork)
+      finishDate = t.isMilestone ? floor : calcFinish(floor, dur, saturdayWork)
     } else {
-      const dates = calcTaskDates(stub, predecessor, saturdayWork, floor)
+      const dates = computeTaskDates(stub, predecessor, saturdayWork)
       startDate = dates.startDate
       finishDate = dates.finishDate
     }
@@ -320,5 +216,5 @@ export function generateScheduleFromTemplate(
       _templateId: t.id,
       _predTemplateId: hasPred ? t.predecessorTemplateTaskId : null,
     }
-  })
+  }) as any[]
 }
