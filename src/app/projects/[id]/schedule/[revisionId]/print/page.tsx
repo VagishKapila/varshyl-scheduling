@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { format, differenceInCalendarDays, addDays, startOfWeek } from 'date-fns'
+import { format, differenceInCalendarDays, addDays, startOfWeek, startOfDay, isValid } from 'date-fns'
 
 const COLOR_MAP: Record<string,string> = {
   blue:'#2458ff', red:'#d71920', green:'#138a36',
@@ -29,7 +29,27 @@ export default function PrintPage() {
   const tasks = [...(revision.tasks || [])].sort((a:any,b:any) => a.sortOrder - b.sortOrder)
   const project = revision.project
   const company = project?.company
-  const today = new Date()
+  const today = startOfDay(new Date())
+
+  function fmtDate(d: string | Date, pattern = 'M/d/yy') {
+    const parsed = startOfDay(new Date(d))
+    return isValid(parsed) ? format(parsed, pattern) : ''
+  }
+
+  function taskInLookahead(t: any): boolean {
+    const s = startOfDay(new Date(t.startDate))
+    const f = startOfDay(new Date(t.finishDate))
+    if (!isValid(s) || !isValid(f)) return false
+    const twoWeekCutoff = startOfDay(addDays(today, 14))
+    return (
+      (s >= today && s <= twoWeekCutoff) ||
+      (f >= today && f <= twoWeekCutoff) ||
+      (s <= today && f >= today)
+    )
+  }
+
+  const twoWeekCutoff = startOfDay(addDays(today, 14))
+  const lookaheadTasks = tasks.filter(taskInLookahead)
 
   const minDate = tasks.length ? new Date(Math.min(...tasks.map((t:any) => new Date(t.startDate).getTime()))) : today
   const maxDate = tasks.length ? new Date(Math.max(...tasks.map((t:any) => new Date(t.finishDate).getTime()))) : addDays(today, 90)
@@ -44,13 +64,6 @@ export default function PrintPage() {
   const weeks: Date[] = []
   let cur = new Date(ganttStart)
   while (cur <= ganttEnd) { weeks.push(new Date(cur)); cur = addDays(cur, 7) }
-
-  // 2-week lookahead tasks
-  const twoWeekCutoff = addDays(today, 14)
-  const lookaheadTasks = tasks.filter((t:any) => {
-    const s = new Date(t.startDate), f = new Date(t.finishDate)
-    return s <= twoWeekCutoff && f >= today
-  })
 
   return (
     <div style={{fontFamily:'Arial,sans-serif',fontSize:10,color:'#111',background:'white',padding:'0.35in'}}>
@@ -135,8 +148,8 @@ export default function PrintPage() {
                   {task.isMilestone&&<span style={{color:barColor,marginRight:2}}>◆</span>}{task.name}
                 </span>
                 <span style={{width:36,textAlign:'center',flexShrink:0}}>{task.durationDays}d</span>
-                <span style={{width:56,flexShrink:0}}>{format(new Date(task.startDate),'M/d/yy')}</span>
-                <span style={{width:56,flexShrink:0}}>{format(new Date(task.finishDate),'M/d/yy')}</span>
+                <span style={{width:56,flexShrink:0}}>{fmtDate(task.startDate)}</span>
+                <span style={{width:56,flexShrink:0}}>{fmtDate(task.finishDate)}</span>
               </div>
               <div style={{flex:1,position:'relative'}}>
                 {weeks.map((_,wi)=>(
@@ -185,8 +198,8 @@ export default function PrintPage() {
                   {t.isMilestone&&'◆ '}{t.name}
                 </td>
                 <td style={{border:'1px solid #eaecf0',padding:'3px 6px'}}>{t.responsibleParty||'—'}</td>
-                <td style={{border:'1px solid #eaecf0',padding:'3px 6px'}}>{format(new Date(t.startDate),'M/d')}</td>
-                <td style={{border:'1px solid #eaecf0',padding:'3px 6px'}}>{format(new Date(t.finishDate),'M/d')}</td>
+                <td style={{border:'1px solid #eaecf0',padding:'3px 6px'}}>{fmtDate(t.startDate, 'M/d')}</td>
+                <td style={{border:'1px solid #eaecf0',padding:'3px 6px'}}>{fmtDate(t.finishDate, 'M/d')}</td>
                 <td style={{border:'1px solid #eaecf0',padding:'3px 6px'}}>{t.notes||'—'}</td>
                 <td style={{border:'1px solid #eaecf0',padding:'3px 6px'}}>{t.isPermitRelated?'✓ Required':'—'}</td>
                 <td style={{border:'1px solid #eaecf0',padding:'3px 6px'}}>—</td>

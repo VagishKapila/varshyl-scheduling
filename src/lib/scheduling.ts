@@ -34,7 +34,7 @@ export function normalizeWorkingDay(date: Date, saturdayWork = false): Date {
 }
 
 export function addWorkingDays(start: Date, days: number, saturdayWork = false): Date {
-  if (days === 0) return normalizeWorkingDay(start, saturdayWork)
+  if (days === 0) return atMidnight(new Date(start))
   if (days < 0) return subtractWorkingDays(start, -days, saturdayWork)
 
   let current = atMidnight(start)
@@ -50,7 +50,7 @@ export function addWorkingDays(start: Date, days: number, saturdayWork = false):
 }
 
 export function subtractWorkingDays(finish: Date, days: number, saturdayWork = false): Date {
-  if (days === 0) return normalizeWorkingDay(finish, saturdayWork)
+  if (days === 0) return atMidnight(new Date(finish))
   if (days < 0) return addWorkingDays(finish, -days, saturdayWork)
 
   let current = atMidnight(finish)
@@ -72,10 +72,10 @@ export function nextWorkingDay(date: Date, saturdayWork = false): Date {
 }
 
 export function finishFromStart(start: Date, durationDays: number, saturdayWork = false): Date {
-  const normalizedStart = normalizeWorkingDay(start, saturdayWork)
-  if (durationDays <= 0) return normalizedStart
-  if (durationDays === 1) return normalizedStart
-  return addWorkingDays(normalizedStart, durationDays - 1, saturdayWork)
+  const base = atMidnight(new Date(start))
+  if (durationDays <= 0) return base
+  if (durationDays === 1) return base
+  return addWorkingDays(base, durationDays - 1, saturdayWork)
 }
 
 export function snapToProjectStart(date: Date, projectStart: Date, saturdayWork = false): Date {
@@ -187,17 +187,15 @@ export function recalculateDates(
 ): TaskLike[] {
   const sorted = [...tasks].sort((a, b) => a.sortOrder - b.sortOrder)
   const floor = projectStart ? normalizeWorkingDay(projectStart, saturdayWork) : undefined
-  let byId = new Map(
-    sorted.map(t => {
-      const start = floor
-        ? snapToProjectStart(t.startDate, floor, saturdayWork)
-        : normalizeWorkingDay(t.startDate, saturdayWork)
-      const dur = t.isMilestone || t.relationshipType === 'Milestone' ? 0 : Math.max(t.durationDays, 1)
-      const finish = t.isMilestone || t.relationshipType === 'Milestone'
-        ? start
-        : finishFromStart(start, dur, saturdayWork)
-      return [t.id, { ...t, startDate: start, finishDate: finish }]
-    }),
+  const byId = new Map(
+    sorted.map(t => [
+      t.id,
+      {
+        ...t,
+        startDate: atMidnight(new Date(t.startDate)),
+        finishDate: atMidnight(new Date(t.finishDate)),
+      },
+    ]),
   )
 
   const maxPasses = Math.max(sorted.length * 2, 4)
@@ -205,9 +203,30 @@ export function recalculateDates(
     let changed = false
     for (const task of sorted) {
       const t = byId.get(task.id)!
-      const pred = task.predecessorTaskId ? byId.get(task.predecessorTaskId) : null
-      const { startDate, finishDate } = calcTaskDates(t, pred ?? null, saturdayWork, floor)
 
+      // Manual dates are user-set — never overwrite
+      if (task.relationshipType === 'Manual') continue
+
+      const isMil = task.isMilestone || task.relationshipType === 'Milestone'
+      const dur = isMil ? 0 : Math.max(task.durationDays, 1)
+
+      if (!task.predecessorTaskId) {
+        let start = t.startDate
+        if (floor) start = snapToProjectStart(start, floor, saturdayWork)
+        const finish = isMil ? start : finishFromStart(start, dur, saturdayWork)
+        if (start.getTime() !== t.startDate.getTime() || finish.getTime() !== t.finishDate.getTime()) {
+          t.startDate = start
+          t.finishDate = finish
+          byId.set(task.id, t)
+          changed = true
+        }
+        continue
+      }
+
+      const pred = byId.get(task.predecessorTaskId)
+      if (!pred) continue
+
+      const { startDate, finishDate } = calcTaskDates(t, pred, saturdayWork, floor)
       if (startDate.getTime() !== t.startDate.getTime() || finishDate.getTime() !== t.finishDate.getTime()) {
         t.startDate = startDate
         t.finishDate = finishDate
@@ -220,6 +239,7 @@ export function recalculateDates(
 
   const parents = sorted.filter(t => sorted.some(c => c.parentTaskId === t.id))
   for (const parent of parents) {
+    if (parent.relationshipType === 'Manual') continue
     const children = sorted.filter(t => t.parentTaskId === parent.id)
     if (!children.length) continue
     const p = byId.get(parent.id)!
@@ -237,19 +257,14 @@ export function generateScheduleFromTemplate(
   saturdayWork = false,
 ): Omit<TaskLike, 'id'>[] {
   const sorted = [...templateTasks].sort((a, b) => a.sortOrder - b.sortOrder)
-  const result: any[] = []
-  const indexById = new Map<string, number>()
   const floor = normalizeWorkingDay(projectStart, saturdayWork)
+  const taskMap = new Map<string, TaskLike>()
 
-  for (let i = 0; i < sorted.length; i++) {
-    const t = sorted[i]
+  for (const t of sorted) {
     const dur = t.defaultDurationDays || 1
-    let predResult: TaskLike | null = null
-
-    if (t.predecessorTemplateTaskId) {
-      const predIdx = indexById.get(t.predecessorTemplateTaskId)
-      if (predIdx !== undefined) predResult = result[predIdx]
-    }
+    const predecessor = t.predecessorTemplateTaskId
+      ? taskMap.get(t.predecessorTemplateTaskId) ?? null
+      : null
 
     const stub: TaskLike = {
       id: t.id,
@@ -265,22 +280,33 @@ export function generateScheduleFromTemplate(
       parentTaskId: null,
     }
 
-    const { startDate, finishDate } = predResult
-      ? calcTaskDates(stub, predResult, saturdayWork, floor)
-      : calcTaskDates(
-          { ...stub, relationshipType: 'Manual' },
-          null,
-          saturdayWork,
-          floor,
-        )
+    let startDate: Date
+    let finishDate: Date
 
-    const item = {
+    if (!predecessor) {
+      startDate = floor
+      finishDate = t.isMilestone ? floor : finishFromStart(floor, dur, saturdayWork)
+    } else {
+      const dates = calcTaskDates(stub, predecessor, saturdayWork, floor)
+      startDate = dates.startDate
+      finishDate = dates.finishDate
+    }
+
+    taskMap.set(t.id, { ...stub, startDate, finishDate })
+  }
+
+  return sorted.map(t => {
+    const g = taskMap.get(t.id)!
+    const hasPred = Boolean(
+      t.predecessorTemplateTaskId && taskMap.has(t.predecessorTemplateTaskId),
+    )
+    return {
       sortOrder: t.sortOrder,
       level: t.level || 1,
       name: t.name,
-      durationDays: dur,
-      startDate,
-      finishDate,
+      durationDays: g.durationDays,
+      startDate: g.startDate,
+      finishDate: g.finishDate,
       relationshipType: t.relationshipType || 'FS',
       predecessorTaskId: null as string | null,
       lagDays: t.lagDays || 0,
@@ -292,12 +318,7 @@ export function generateScheduleFromTemplate(
       isMilestone: t.isMilestone || false,
       parentTaskId: null as string | null,
       _templateId: t.id,
-      _predTemplateId: predResult ? t.predecessorTemplateTaskId : null,
+      _predTemplateId: hasPred ? t.predecessorTemplateTaskId : null,
     }
-
-    indexById.set(t.id, i)
-    result.push(item)
-  }
-
-  return result
+  })
 }
