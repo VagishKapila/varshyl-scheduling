@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { format, addDays, differenceInCalendarDays, startOfWeek, startOfMonth, startOfQuarter, startOfYear } from 'date-fns'
@@ -160,6 +160,45 @@ function reorderTaskList(tasks: Task[], blockIds: string[], targetId: string): s
   const targetIdx = remaining.findIndex(t => t.id === targetId)
   const insertAt = targetIdx >= 0 ? targetIdx : remaining.length
   return [...remaining.slice(0, insertAt), ...blockTasks, ...remaining.slice(insertAt)].map(t => t.id)
+}
+
+function getPredecessorLabel(task: Task, allTasks: Task[]): string {
+  if (task.parentTaskId) {
+    const parent = allTasks.find(t => t.id === task.parentTaskId)
+    return parent ? `${parent.name} → ${task.name}` : task.name
+  }
+  return task.name
+}
+
+function buildPredecessorOptions(tasks: Task[], excludeId: string) {
+  const pool = tasks.filter(t => t.id !== excludeId)
+  const poolIds = new Set(pool.map(t => t.id))
+  const ordered = buildRenderOrder(pool)
+  const elements: React.ReactNode[] = []
+
+  for (const t of ordered) {
+    if (t.parentTaskId && poolIds.has(t.parentTaskId)) continue
+
+    const children = ordered.filter(c => c.parentTaskId === t.id && poolIds.has(c.id))
+    if (children.length > 0) {
+      elements.push(
+        <optgroup key={`pred-group-${t.id}`} label={t.name}>
+          <option value={t.id} className="font-semibold">{t.name}</option>
+          {children.map(c => (
+            <option key={c.id} value={c.id} className="text-xs pl-4">
+              {`  → ${c.name}`}
+            </option>
+          ))}
+        </optgroup>,
+      )
+    } else {
+      elements.push(
+        <option key={t.id} value={t.id}>{getPredecessorLabel(t, tasks)}</option>,
+      )
+    }
+  }
+
+  return elements
 }
 
 interface Task {
@@ -687,7 +726,6 @@ function TaskDrawer({ task, tasks, displayNumber, saturdayWork, onClose, onSave,
       : calcFinish(startDate, duration, saturdayWork)
 
   const setMetaField = (k: string, v: unknown) => setMeta(m => ({ ...m, [k]: v }))
-  const otherTasks = tasks.filter(t => t.id !== task.id)
   const parentOptions = tasks.filter(t => t.id !== task.id && !t.parentTaskId)
 
   const onDurationChange = (val: string) => {
@@ -698,6 +736,34 @@ function TaskDrawer({ task, tasks, displayNumber, saturdayWork, onClose, onSave,
   const onStartChange = (val: string) => {
     setStartDate(parseDate(val))
   }
+
+  const handleSave = useCallback(async () => {
+    if (saving) return
+    setSaving(true)
+    try {
+      await onSave(task.id, {
+        ...meta,
+        durationDays: duration,
+        startDate: fmtInput(startDate),
+        finishDate: fmtInput(finishDate),
+      })
+      onClose()
+    } finally {
+      setSaving(false)
+    }
+  }, [saving, meta, duration, startDate, finishDate, task.id, onSave, onClose])
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault()
+        handleSave()
+      }
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [onClose, handleSave])
 
   return (
     <div className="h-full flex flex-col">
@@ -757,7 +823,7 @@ function TaskDrawer({ task, tasks, displayNumber, saturdayWork, onClose, onSave,
           <select value={meta.predecessorTaskId || ''} onChange={e => setMetaField('predecessorTaskId', e.target.value || null)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400">
             <option value="">None</option>
-            {otherTasks.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            {buildPredecessorOptions(tasks, task.id)}
           </select>
         </div>
         <div>
@@ -812,20 +878,7 @@ function TaskDrawer({ task, tasks, displayNumber, saturdayWork, onClose, onSave,
           className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-sm font-semibold min-w-[80px]">Cancel</button>
         <button
           disabled={saving}
-          onClick={async () => {
-            setSaving(true)
-            try {
-              await onSave(task.id, {
-                ...meta,
-                durationDays: duration,
-                startDate: fmtInput(startDate),
-                finishDate: fmtInput(finishDate),
-              })
-              onClose()
-            } finally {
-              setSaving(false)
-            }
-          }}
+          onClick={handleSave}
           className="flex-1 px-3 py-2 rounded-lg text-white text-sm font-bold min-w-[80px] disabled:opacity-60" style={{background:'#f15a24'}}>
           {saving ? 'Saving…' : 'Save Changes'}
         </button>
@@ -919,9 +972,7 @@ function AddTaskModal({ revisionId, tasks, onClose, onAdded }: {
             <select value={predecessorTaskId} onChange={e => setPredecessorTaskId(e.target.value)}
               className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm">
               <option value="">None</option>
-              {tasks.map(t => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
+              {buildPredecessorOptions(tasks, '')}
             </select>
           </div>
           <div>

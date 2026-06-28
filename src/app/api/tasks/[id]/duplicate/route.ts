@@ -10,7 +10,7 @@ function taskCopyData(source: any, overrides: Record<string, unknown> = {}) {
     parentTaskId: source.parentTaskId,
     sortOrder: source.sortOrder,
     level: source.level,
-    name: `${source.name} (Copy)`,
+    name: source.name,
     durationDays: source.durationDays,
     startDate: source.startDate,
     finishDate: source.finishDate,
