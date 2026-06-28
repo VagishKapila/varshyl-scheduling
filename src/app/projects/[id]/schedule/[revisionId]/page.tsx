@@ -3,7 +3,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { format, addDays, differenceInCalendarDays, startOfWeek, startOfMonth, startOfQuarter, startOfYear } from 'date-fns'
-import { finishFromStart } from '@/lib/scheduling'
+import { parseLocalDate, toDateInputValue, formatDisplayDate, finishFromStartLocal } from '@/lib/dates'
 
 const COLOR_MAP: Record<string, string> = {
   blue: '#2458ff', red: '#d71920', green: '#138a36',
@@ -107,15 +107,15 @@ function getBarDates(task: Task, tasks: Task[]): { start: Date; finish: Date } {
   if (hasChildren(tasks, task.id)) {
     const children = tasks.filter(t => t.parentTaskId === task.id)
     return {
-      start: new Date(Math.min(...children.map(c => new Date(c.startDate).getTime()))),
-      finish: new Date(Math.max(...children.map(c => new Date(c.finishDate).getTime()))),
+      start: new Date(Math.min(...children.map(c => parseLocalDate(c.startDate).getTime()))),
+      finish: new Date(Math.max(...children.map(c => parseLocalDate(c.finishDate).getTime()))),
     }
   }
-  return { start: new Date(task.startDate), finish: new Date(task.finishDate) }
+  return { start: parseLocalDate(task.startDate), finish: parseLocalDate(task.finishDate) }
 }
 
 function dayOffsetFrom(date: Date | string, ganttStart: Date) {
-  return differenceInCalendarDays(new Date(date), ganttStart)
+  return differenceInCalendarDays(parseLocalDate(date), ganttStart)
 }
 
 function getTaskBarGeometry(
@@ -244,7 +244,7 @@ export default function GanttPage() {
   const COL_PX = scaleConfig.colPx
 
   const today = new Date()
-  const minDate = tasks.length ? new Date(Math.min(...tasks.map(t => new Date(t.startDate).getTime()))) : today
+  const minDate = tasks.length ? new Date(Math.min(...tasks.map(t => parseLocalDate(t.startDate).getTime()))) : today
   const maxDate = tasks.length ? new Date(Math.max(...tasks.map(t => new Date(t.finishDate).getTime()))) : addDays(today, 90)
   const ganttStart = startOfWeek(addDays(minDate, -7))
   const ganttEnd = addDays(maxDate, 30)
@@ -545,8 +545,8 @@ export default function GanttPage() {
                       </span>
                     </span>
                     <span className="text-gray-500 text-center">{task.durationDays}d</span>
-                    <span className="text-gray-500">{format(barDates.start, 'M/d/yy')}</span>
-                    <span className="text-gray-500">{format(barDates.finish, 'M/d/yy')}</span>
+                    <span className="text-gray-500">{formatDisplayDate(barDates.start)}</span>
+                    <span className="text-gray-500">{formatDisplayDate(barDates.finish)}</span>
                     <span className="text-gray-400 truncate">{task.responsibleParty || ''}</span>
                   </div>
                 </div>
@@ -654,8 +654,14 @@ function TaskDrawer({ task, tasks, displayNumber, saturdayWork, onClose, onSave,
   onDelete: (id: string) => void
   onDuplicate: (id: string) => void
 }) {
-  const [form, setForm] = useState({ ...task })
+  const [form, setForm] = useState(() => ({
+    ...task,
+    startDate: toDateInputValue(task.startDate),
+    finishDate: toDateInputValue(task.finishDate),
+  }))
   const [saving, setSaving] = useState(false)
+  const isManual = form.relationshipType === 'Manual'
+  const isMilestone = form.relationshipType === 'Milestone'
 
   function patchForm(updates: Partial<Task>) {
     setForm(f => ({ ...f, ...updates }))
@@ -663,18 +669,21 @@ function TaskDrawer({ task, tasks, displayNumber, saturdayWork, onClose, onSave,
 
   function updateDuration(dur: number) {
     setForm(f => {
-      const durationDays = Math.max(0, dur)
-      if (f.relationshipType === 'Manual') return { ...f, durationDays }
-      const finish = finishFromStart(new Date(f.startDate), durationDays || 1, saturdayWork)
-      return { ...f, durationDays, finishDate: format(finish, 'yyyy-MM-dd') }
+      const durationDays = isMilestone ? Math.max(0, dur) : Math.max(1, dur || 1)
+      if (isManual) return { ...f, durationDays }
+      if (isMilestone) return { ...f, durationDays, finishDate: f.startDate }
+      const finish = finishFromStartLocal(f.startDate, durationDays, saturdayWork)
+      return { ...f, durationDays, finishDate: toDateInputValue(finish) }
     })
   }
 
   function updateStartDate(startStr: string) {
     setForm(f => {
-      if (f.relationshipType === 'Manual') return { ...f, startDate: startStr }
-      const finish = finishFromStart(new Date(startStr), f.durationDays || 1, saturdayWork)
-      return { ...f, startDate: startStr, finishDate: format(finish, 'yyyy-MM-dd') }
+      if (isManual) return { ...f, startDate: startStr }
+      if (isMilestone) return { ...f, startDate: startStr, finishDate: startStr }
+      const durationDays = Math.max(1, f.durationDays || 1)
+      const finish = finishFromStartLocal(startStr, durationDays, saturdayWork)
+      return { ...f, startDate: startStr, finishDate: toDateInputValue(finish) }
     })
   }
 
@@ -697,7 +706,7 @@ function TaskDrawer({ task, tasks, displayNumber, saturdayWork, onClose, onSave,
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Duration (days)</label>
-            <input type="number" min={0} value={form.durationDays}
+            <input type="number" min={isMilestone ? 0 : 1} value={form.durationDays}
               onChange={e => updateDuration(Number(e.target.value))}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
           </div>
@@ -710,14 +719,19 @@ function TaskDrawer({ task, tasks, displayNumber, saturdayWork, onClose, onSave,
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Start Date</label>
-            <input type="date" value={form.startDate?.slice(0,10)}
+            <input type="date" value={form.startDate}
               onChange={e => updateStartDate(e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Finish Date</label>
-            <input type="date" value={form.finishDate?.slice(0,10)} onChange={e => set('finishDate', e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+              Finish Date{!isManual && <span className="normal-case font-normal text-gray-400"> (calculated)</span>}
+            </label>
+            <input type="date" value={form.finishDate}
+              readOnly={!isManual}
+              disabled={!isManual}
+              onChange={e => isManual && set('finishDate', e.target.value)}
+              className={`w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 ${!isManual ? 'bg-gray-50 text-gray-600 cursor-default' : ''}`} />
           </div>
         </div>
         <div>

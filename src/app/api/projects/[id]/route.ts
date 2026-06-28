@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { parseLocalDate } from '@/lib/dates'
 
 async function getCompanyId(session: any) {
   return (session?.user as any)?.companyId
@@ -29,6 +30,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const companyId = await getCompanyId(session)
     const body = await req.json()
+    if (body.startDate) body.startDate = parseLocalDate(body.startDate)
+    if (body.targetEndDate) body.targetEndDate = parseLocalDate(body.targetEndDate)
     const project = await prisma.project.updateMany({
       where: { id: params.id, companyId },
       data: { ...body, updatedAt: new Date() },

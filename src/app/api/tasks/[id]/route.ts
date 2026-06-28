@@ -3,14 +3,24 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { autoColor } from '@/lib/scheduling'
+import { parseLocalDate } from '@/lib/dates'
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const session = await getServerSession(authOptions)
     if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const body = await req.json()
-    if (body.startDate) body.startDate = new Date(body.startDate)
-    if (body.finishDate) body.finishDate = new Date(body.finishDate)
+
+    if (body.durationDays !== undefined && body.durationDays < 1) {
+      const isMilestone =
+        body.relationshipType === 'Milestone' || body.isMilestone === true
+      if (!isMilestone) {
+        return NextResponse.json({ error: 'Duration must be at least 1 day' }, { status: 400 })
+      }
+    }
+
+    if (body.startDate) body.startDate = parseLocalDate(body.startDate)
+    if (body.finishDate) body.finishDate = parseLocalDate(body.finishDate)
     if (body.name && !body.color) body.color = autoColor(body.name)
     const task = await prisma.scheduleTask.update({ where: { id: params.id }, data: body })
     return NextResponse.json({ data: task })
