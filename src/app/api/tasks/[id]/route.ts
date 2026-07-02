@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { autoColor } from '@/lib/scheduling'
+import { autoColor, recalculateDates } from '@/lib/scheduling'
 import { parseDate, fmtInput, calcFinish } from '@/lib/dates'
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
@@ -28,37 +28,59 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       return NextResponse.json({ error: 'Duration must be at least 1 day' }, { status: 400 })
     }
 
-    const data: Record<string, unknown> = { ...body }
-
-    if (data.startDate) {
-      data.startDate = parseDate(String(data.startDate))
-    }
-
-    const rel = (data.relationshipType as string) ?? existing.relationshipType
+    const rel = body.relationshipType ?? existing.relationshipType
     const isManual = rel === 'Manual'
-    const dur = Math.max(1, Number(data.durationDays ?? existing.durationDays) || 1)
+    const dur = Math.max(1, Number(body.durationDays ?? existing.durationDays) || 1)
 
-    if (!isManual && data.startDate) {
-      const start = data.startDate as Date
-      data.finishDate = isMilestone ? start : calcFinish(start, dur, saturdayWork)
-    } else if (data.finishDate) {
-      data.finishDate = parseDate(String(data.finishDate))
+    let startDate = body.startDate ? parseDate(body.startDate) : existing.startDate
+    let finishDate = body.finishDate ? parseDate(body.finishDate) : existing.finishDate
+
+    if (!isManual && body.startDate) {
+      startDate = parseDate(body.startDate)
+      finishDate = isMilestone ? startDate : calcFinish(startDate, dur, saturdayWork)
+    } else if (body.finishDate) {
+      finishDate = parseDate(body.finishDate)
     }
 
-    if (data.name && !data.color) {
-      data.color = autoColor(String(data.name))
-    }
+    const name = body.name ?? existing.name
+    const color = body.color ?? (body.name ? autoColor(body.name) : existing.color)
 
-    const task = await prisma.scheduleTask.update({
+    await prisma.scheduleTask.update({
       where: { id: params.id },
-      data,
+      data: {
+        name,
+        durationDays: isMilestone ? (body.durationDays ?? existing.durationDays) : dur,
+        startDate,
+        finishDate,
+        relationshipType: rel,
+        predecessorTaskId:
+          body.predecessorTaskId !== undefined
+            ? body.predecessorTaskId
+            : existing.predecessorTaskId,
+        lagDays: body.lagDays ?? existing.lagDays,
+        color,
+        responsibleParty:
+          body.responsibleParty !== undefined
+            ? body.responsibleParty
+            : existing.responsibleParty,
+        notes: body.notes !== undefined ? body.notes : existing.notes,
+        isMilestone: body.isMilestone ?? existing.isMilestone,
+        isPermitRelated: body.isPermitRelated ?? existing.isPermitRelated,
+        isCritical: body.isCritical ?? existing.isCritical,
+        parentTaskId:
+          body.parentTaskId !== undefined ? body.parentTaskId : existing.parentTaskId,
+      },
     })
+
+    const tasks = await recalculateDates(existing.revisionId, saturdayWork)
 
     return NextResponse.json({
       data: {
-        ...task,
-        startDate: fmtInput(task.startDate),
-        finishDate: fmtInput(task.finishDate),
+        tasks: tasks.map(t => ({
+          ...t,
+          startDate: fmtInput(t.startDate),
+          finishDate: fmtInput(t.finishDate),
+        })),
       },
     })
   } catch (e: any) {

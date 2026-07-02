@@ -309,13 +309,22 @@ export default function GanttPage() {
     } else if (payload.relationshipType && payload.relationshipType !== 'Milestone') {
       payload.isMilestone = payload.isMilestone ?? false
     }
-    await fetch(`/api/tasks/${id}`, {
+    const res = await fetch(`/api/tasks/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     })
-    await fetch(`/api/revisions/${revisionId}/recalculate`, { method: 'POST' })
-    await loadRevision()
+    const json = await res.json()
+    if (json.data?.tasks) {
+      setRevision((r: any) => (r ? { ...r, tasks: json.data.tasks } : r))
+      setTasks(sortTasks(json.data.tasks))
+      if (selectedTask?.id === id) {
+        const updated = json.data.tasks.find((t: Task) => t.id === id)
+        if (updated) setSelectedTask(updated)
+      }
+    } else {
+      await loadRevision()
+    }
   }
 
   async function updateTask(id: string, data: Partial<Task>) {
@@ -375,14 +384,19 @@ export default function GanttPage() {
 
   async function saveRevision(revisionName: string, notes: string) {
     setSaving(true)
-    await fetch(`/api/projects/${projectId}/revisions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ revisionName, notes, tasks: [] }),
-    })
-    setSaving(false)
-    setShowRevisionModal(false)
-    router.push(`/projects/${projectId}`)
+    try {
+      const res = await fetch(`/api/projects/${projectId}/revisions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ revisionName, notes }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Failed to save revision')
+      setShowRevisionModal(false)
+      router.push(`/projects/${projectId}/schedule/${json.data.id}`)
+    } finally {
+      setSaving(false)
+    }
   }
 
   const rowIndexById = new Map(renderedTasks.map((t, i) => [t.id, i]))
