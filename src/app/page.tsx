@@ -9,7 +9,7 @@ import { signOut } from 'next-auth/react'
 interface Project {
   id: string; name: string; clientName: string; address: string
   projectType: string; status: string; updatedAt: string
-  revisions: { revisionName: string; createdAt: string }[]
+  revisions: { id: string; revisionName: string; createdAt: string; isCurrent?: boolean }[]
 }
 
 export default function DashboardPage() {
@@ -141,7 +141,7 @@ export default function DashboardPage() {
                     </Link>
                     <button onClick={() => duplicateProject(p)}
                       className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50">Duplicate</button>
-                    <Link href={rev ? `/projects/${p.id}/schedule/${rev && 'latest'}/print` : '#'}>
+                    <Link href={rev?.id ? `/projects/${p.id}/schedule/${rev.id}/print` : '#'}>
                       <button className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50">PDF</button>
                     </Link>
                     <button onClick={() => archiveProject(p.id)}

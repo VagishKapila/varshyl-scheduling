@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { format, differenceInCalendarDays, addDays, startOfWeek, startOfDay } from 'date-fns'
 import { parseDate, fmt } from '@/lib/dates'
@@ -76,27 +76,51 @@ function LookAheadCell({
 
 export default function PrintPage() {
   const params = useParams()
+  const router = useRouter()
   const projectId = params.id as string
   const revisionId = params.revisionId as string
   const [revision, setRevision] = useState<any>(null)
   const [lookahead, setLookahead] = useState<Record<string, LookAheadEntry>>({})
   const [loading, setLoading] = useState(true)
+  const [notFound, setNotFound] = useState(false)
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (revId: string) => {
     const [revRes, laRes] = await Promise.all([
-      fetch(`/api/revisions/${revisionId}`),
-      fetch(`/api/revisions/${revisionId}/lookahead`),
+      fetch(`/api/revisions/${revId}`),
+      fetch(`/api/revisions/${revId}/lookahead`),
     ])
     const revData = await revRes.json()
+    if (!revRes.ok || !revData.data) {
+      setNotFound(true)
+      setLoading(false)
+      return
+    }
     const laData = await laRes.json()
     setRevision(revData.data)
     setLookahead(laData.data || {})
+    setNotFound(false)
     setLoading(false)
-  }, [revisionId])
+  }, [])
 
   useEffect(() => {
-    loadData()
-  }, [loadData])
+    async function resolveAndLoad() {
+      if (revisionId === 'latest') {
+        const res = await fetch(`/api/projects/${projectId}`)
+        const data = await res.json()
+        const current = data.data?.revisions?.find((r: any) => r.isCurrent)
+          ?? data.data?.revisions?.[0]
+        if (current?.id) {
+          router.replace(`/projects/${projectId}/schedule/${current.id}/print`)
+          return
+        }
+        setNotFound(true)
+        setLoading(false)
+        return
+      }
+      await loadData(revisionId)
+    }
+    resolveAndLoad()
+  }, [revisionId, projectId, router, loadData])
 
   function onLookaheadSaved(taskId: string, field: keyof LookAheadEntry, val: string) {
     setLookahead(prev => ({
@@ -106,7 +130,7 @@ export default function PrintPage() {
   }
 
   if (loading) return <div className="p-8 text-gray-400">Loading…</div>
-  if (!revision) return <div className="p-8 text-red-500">Revision not found</div>
+  if (notFound || !revision) return <div className="p-8 text-red-500">Revision not found</div>
 
   const tasks = [...(revision.tasks || [])].sort((a: any, b: any) => a.sortOrder - b.sortOrder)
   const project = revision.project
