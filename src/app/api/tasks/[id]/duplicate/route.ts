@@ -55,11 +55,20 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     })
 
     const blockSize = 1 + children.length
-    const insertSort = original.sortOrder + 1
+    const lastInSourceBlock = children.length > 0 ? children[children.length - 1] : original
+    const insertSort = lastInSourceBlock.sortOrder + 1
 
     await prisma.scheduleTask.updateMany({
       where: { revisionId: original.revisionId, sortOrder: { gte: insertSort } },
       data: { sortOrder: { increment: blockSize } },
+    })
+
+    const taskBeforeInsertion = await prisma.scheduleTask.findFirst({
+      where: {
+        revisionId: original.revisionId,
+        sortOrder: { lt: insertSort },
+      },
+      orderBy: { sortOrder: 'desc' },
     })
 
     const idMap = new Map<string, string>()
@@ -68,7 +77,7 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
       data: taskCopyData(original, {
         parentTaskId: original.parentTaskId,
         sortOrder: insertSort,
-        predecessorTaskId: original.id,
+        predecessorTaskId: taskBeforeInsertion?.id ?? original.predecessorTaskId,
         relationshipType: 'FS',
         lagDays: 0,
       }),

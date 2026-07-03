@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { format, differenceInCalendarDays, addDays, startOfWeek, startOfDay } from 'date-fns'
 import { parseDate, fmt } from '@/lib/dates'
@@ -77,6 +77,7 @@ function LookAheadCell({
 export default function PrintPage() {
   const params = useParams()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const projectId = params.id as string
   const revisionId = params.revisionId as string
   const [revision, setRevision] = useState<any>(null)
@@ -152,6 +153,9 @@ export default function PrintPage() {
   const lookaheadTasks = tasks.filter(taskInLookahead)
   const showInspections = !['no-permit', 'emergency'].includes(project?.permitStatus ?? '')
 
+  const showLookAhead = searchParams.get('lookahead') !== 'false'
+  const showSchedule = searchParams.get('schedule') !== 'false'
+
   const minDate = tasks.length
     ? new Date(Math.min(...tasks.map((t: any) => parseDate(t.startDate).getTime())))
     : today
@@ -214,7 +218,7 @@ export default function PrintPage() {
       </div>
 
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 8, fontSize: 9 }}>
-        {Object.entries({ blue: 'Construction', red: 'Inspection/Hold/City', green: 'Owner/Client', teal: 'Contingency', purple: 'Procurement', black: 'Phase Summary' }).map(([c, l]) => (
+        {showSchedule && Object.entries({ blue: 'Construction', red: 'Inspection/Hold/City', green: 'Owner/Client', teal: 'Contingency', purple: 'Procurement', black: 'Phase Summary' }).map(([c, l]) => (
           <span key={c} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: COLOR_MAP[c], display: 'inline-block' }} />
             {l}
@@ -222,6 +226,7 @@ export default function PrintPage() {
         ))}
       </div>
 
+      {showSchedule && (
       <div style={{ border: '1px solid #111', borderRadius: 4, overflow: 'hidden' }}>
         <div style={{ display: 'flex', background: '#f2f4f7', borderBottom: '1px solid #ccc', height: 28 }}>
           <div style={{ width: 420, flexShrink: 0, borderRight: '1px solid #ccc', display: 'flex', alignItems: 'center', paddingLeft: 6, fontSize: 9, fontWeight: 700, color: '#475467', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
@@ -287,8 +292,10 @@ export default function PrintPage() {
           )
         })}
       </div>
+      )}
 
-      <div style={{ marginTop: 24, pageBreakBefore: 'always' }}>
+      {showLookAhead && (
+      <div style={{ marginTop: showSchedule ? 24 : 0, pageBreakBefore: showSchedule ? 'always' : 'auto' }}>
         <div style={{ fontWeight: 900, fontSize: 13, borderBottom: '2px solid #111', paddingBottom: 4, marginBottom: 10 }}>
           2-Week Look-Ahead — {format(today, 'MMM d')} to {format(twoWeekCutoff, 'MMM d, yyyy')}
         </div>
@@ -338,6 +345,7 @@ export default function PrintPage() {
           </tbody>
         </table>
       </div>
+      )}
 
       <div style={{ marginTop: 16, borderTop: '1px solid #111', paddingTop: 6, display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#475467' }}>
         <span style={{ flex: 1 }}>{company?.footerText || 'COMPANY CONFIDENTIAL | For project coordination only. Schedule is a living document and may change due to permitting, inspections, owner decisions, material availability, weather, or field conditions.'}</span>

@@ -400,6 +400,7 @@ export default function GanttPage() {
   }
 
   const rowIndexById = new Map(renderedTasks.map((t, i) => [t.id, i]))
+  const parentIds = new Set(tasks.filter(t => t.parentTaskId).map(t => t.parentTaskId!))
   const ganttWidth = totalDays * COL_PX
   const ganttHeight = renderedTasks.length * ROW_H
 
@@ -473,9 +474,37 @@ export default function GanttPage() {
             className="px-3 py-1.5 text-xs font-semibold border border-red-200 text-red-600 rounded-lg hover:bg-red-50">+ Add Hold</button>
           <button onClick={() => setShowRevisionModal(true)}
             className="px-3 py-1.5 text-xs font-semibold border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">Save Revision</button>
-          <Link href={`/projects/${projectId}/schedule/${revisionId}/print`}>
-            <button className="px-3 py-1.5 text-xs font-bold text-white rounded-lg" style={{background:'#111'}}>Print PDF</button>
-          </Link>
+          <div className="relative group">
+            <button type="button" className="px-3 py-1.5 text-xs font-bold text-white rounded-lg" style={{ background: '#111' }}>
+              Print PDF ▾
+            </button>
+            <div className="hidden group-hover:block group-focus-within:block absolute right-0 top-full mt-1 bg-white shadow-lg rounded-lg border border-gray-200 py-1 z-50 min-w-[220px]">
+              <a
+                href={`/projects/${projectId}/schedule/${revisionId}/print`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block px-4 py-2 text-xs text-gray-700 hover:bg-gray-50"
+              >
+                Full Schedule + Look-Ahead
+              </a>
+              <a
+                href={`/projects/${projectId}/schedule/${revisionId}/print?lookahead=false`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block px-4 py-2 text-xs text-gray-700 hover:bg-gray-50"
+              >
+                Schedule Only
+              </a>
+              <a
+                href={`/projects/${projectId}/schedule/${revisionId}/print?schedule=false`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block px-4 py-2 text-xs text-gray-700 hover:bg-gray-50"
+              >
+                Look-Ahead Only
+              </a>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -545,8 +574,9 @@ export default function GanttPage() {
             </svg>
 
           {renderedTasks.map((task, rowIndex) => {
-            const isPhase = task.level === 0
-            const isSummary = hasChildren(tasks, task.id)
+            const isParent = parentIds.has(task.id)
+            const isPhase = !task.parentTaskId && isParent
+            const isChild = Boolean(task.parentTaskId)
             const barDates = getBarDates(task, tasks)
             const startOff = dayOffset(barDates.start) * COL_PX
             const dur = Math.max(1, differenceInCalendarDays(barDates.finish, barDates.start) + 1)
@@ -560,7 +590,11 @@ export default function GanttPage() {
 
             return (
               <div key={task.id}
-                className={`group flex border-b border-gray-100 cursor-pointer hover:bg-blue-50/30 ${isPhase || isSummary ? 'bg-gray-50' : ''} ${task.isCritical ? 'ring-inset ring-1 ring-red-200' : ''} ${isDragging ? 'opacity-50' : ''} ${isDragOver ? 'bg-orange-50' : ''}`}
+                className={`group flex border-b border-gray-100 cursor-pointer hover:bg-blue-50/30 ${
+                  isPhase ? 'bg-gray-900 text-white font-bold' :
+                  isParent ? 'bg-blue-50 font-semibold text-blue-900' :
+                  isChild ? 'bg-white text-gray-700' : ''
+                } ${task.isCritical ? 'ring-inset ring-1 ring-red-200' : ''} ${isDragging ? 'opacity-50' : ''} ${isDragOver ? 'bg-orange-50' : ''}`}
                 style={{height: ROW_H}}
                 onDragOver={e => { e.preventDefault(); setDragOverId(task.id) }}
                 onDragLeave={() => setDragOverId(id => id === task.id ? null : id)}
@@ -580,8 +614,12 @@ export default function GanttPage() {
                       onClick={e => e.stopPropagation()}
                     >⠿</span>
                     <span className="text-gray-400">{displayNum}</span>
-                    <span className={`flex items-center gap-1 min-w-0 font-${isPhase || isSummary ? 'bold' : 'medium'} ${isPhase || isSummary ? 'text-gray-900' : 'text-gray-800'}`}
-                      style={{paddingLeft: indentPx}}>
+                    <span className={`flex items-center gap-1 min-w-0 ${
+                      isPhase ? 'font-bold text-white' :
+                      isParent ? 'font-semibold text-blue-900' :
+                      'font-medium text-gray-800'
+                    }`}
+                      style={{ paddingLeft: isChild ? indentPx + 8 : indentPx }}>
                       {isMil && <span className="shrink-0" style={{color:barColor}}>◆</span>}
                       <span className="truncate flex-1">{task.name}</span>
                       <span className="shrink-0 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity no-print">
@@ -597,10 +635,10 @@ export default function GanttPage() {
                         >Delete</button>
                       </span>
                     </span>
-                    <span className="text-gray-500 text-center">{task.durationDays}d</span>
-                    <span className="text-gray-500">{fmt(barDates.start)}</span>
-                    <span className="text-gray-500">{fmt(barDates.finish)}</span>
-                    <span className="text-gray-400 truncate">{task.responsibleParty || ''}</span>
+                    <span className={isPhase ? 'text-gray-300 text-center' : 'text-gray-500 text-center'}>{task.durationDays}d</span>
+                    <span className={isPhase ? 'text-gray-300' : 'text-gray-500'}>{fmt(barDates.start)}</span>
+                    <span className={isPhase ? 'text-gray-300' : 'text-gray-500'}>{fmt(barDates.finish)}</span>
+                    <span className={isPhase ? 'text-gray-400 truncate' : 'text-gray-400 truncate'}>{task.responsibleParty || ''}</span>
                   </div>
                 </div>
 
@@ -620,15 +658,28 @@ export default function GanttPage() {
                       background: barColor,
                       transform: 'rotate(45deg)',
                     }} />
-                  ) : isSummary ? (
+                  ) : isPhase ? (
                     <div className="absolute rounded flex items-center overflow-hidden"
                       style={{
                         left: startOff + 2,
-                        top: 13,
+                        top: 10,
                         width: Math.max(barW, 4),
-                        height: 6,
-                        background: barColor,
-                        opacity: 0.7,
+                        height: 12,
+                        background: '#111',
+                      }}>
+                      {barW >= 60 && (
+                        <span className="px-1 text-[10px] font-semibold text-white truncate block w-full" style={{ textOverflow: 'ellipsis', overflow: 'hidden' }}>{task.name}</span>
+                      )}
+                    </div>
+                  ) : isParent ? (
+                    <div className="absolute rounded flex items-center overflow-hidden"
+                      style={{
+                        left: startOff + 2,
+                        top: 11,
+                        width: Math.max(barW, 4),
+                        height: 10,
+                        background: '#2458ff',
+                        opacity: 0.9,
                       }}>
                       {barW >= 60 && (
                         <span className="px-1 text-[10px] font-semibold text-white truncate block w-full" style={{ textOverflow: 'ellipsis', overflow: 'hidden' }}>{task.name}</span>
@@ -638,9 +689,9 @@ export default function GanttPage() {
                     <div className="absolute rounded flex items-center overflow-hidden"
                       style={{
                         left: startOff + 2,
-                        top: 9,
+                        top: 12,
                         width: Math.max(barW, 4),
-                        height: 14,
+                        height: 8,
                         background: barColor,
                         opacity: task.isCritical ? 1 : 0.85,
                       }}>
