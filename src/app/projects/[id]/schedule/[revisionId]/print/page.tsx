@@ -79,17 +79,6 @@ function getBarDates(task: TaskRow, tasks: TaskRow[]) {
   return { start: parseDate(task.startDate), finish: parseDate(task.finishDate) }
 }
 
-function taskNestingDepth(task: TaskRow, tasks: TaskRow[]): number {
-  const byId = new Map(tasks.map(t => [t.id, t]))
-  let depth = 0
-  let cur: string | null = task.parentTaskId
-  while (cur) {
-    depth++
-    cur = byId.get(cur)?.parentTaskId ?? null
-  }
-  return depth
-}
-
 function getDisplayDuration(task: TaskRow, tasks: TaskRow[], saturdayWork = false): number {
   const children = tasks.filter(t => t.parentTaskId === task.id)
   if (children.length === 0) return task.durationDays
@@ -359,79 +348,123 @@ export default function PrintPage() {
                   const isParent = parentIds.has(task.id)
                   const isPhase = !task.parentTaskId && isParent
                   const isChild = Boolean(task.parentTaskId)
-                  const depth = taskNestingDepth(task, tasks)
-                  const indent = isChild ? 4 + depth * 8 : 0
                   const barDates = getBarDates(task, tasks)
                   const { startCol, endCol } = getTaskColumns(barDates.start, barDates.finish, chartStart, totalWeeks)
-                  const barColor = isPhase ? '#111111' : (COLOR_MAP[task.color] ?? '#2458ff')
+                  const barColor = COLOR_MAP[task.color] ?? '#2458ff'
                   const displayDays = getDisplayDuration(task, tasks, Boolean(project?.saturdayWork))
-                  const phaseLeft = 'bg-gray-900 text-white font-bold'
-                  const parentLeft = 'bg-blue-50 font-semibold text-blue-900'
-                  const leftCell = isPhase ? phaseLeft : isParent ? parentLeft : ''
-                  const nameClass = isPhase ? 'uppercase' : isParent ? 'font-semibold text-blue-900' : 'text-gray-700'
+                  const rowNumber = taskIndex + 1
+                  const hasPredecessor = Boolean(task.predecessorTaskId && task.relationshipType !== 'Manual')
 
                   return (
-                    <tr
-                      key={task.id}
-                      className="border-b border-gray-200"
-                      style={{ pageBreakInside: 'avoid', height: 22 }}
-                    >
-                      <td className={`p-1 text-center ${leftCell || 'text-gray-500'}`}>{taskIndex + 1}</td>
-                      <td className={`p-1 ${leftCell}`} style={{ paddingLeft: `${indent}px` }}>
-                        <span className={nameClass}>
-                          {task.isMilestone && <span style={{ color: barColor, marginRight: 2 }}>◆</span>}
-                          {task.name}
-                        </span>
+                    <tr key={task.id} style={{ pageBreakInside: 'avoid' }}>
+                      <td style={{
+                        background: isPhase ? '#111' : 'transparent',
+                        color: isPhase ? '#fff' : '#94a3b8',
+                        padding: '6px 4px',
+                        fontSize: '10px',
+                        textAlign: 'center',
+                        borderBottom: '1px solid #f1f5f9',
+                      }}>{rowNumber}</td>
+
+                      <td style={{
+                        background: isPhase ? '#111' : isParent ? '#eef2f8' : 'transparent',
+                        color: isPhase ? '#fff' : '#111827',
+                        padding: '6px 8px',
+                        paddingLeft: isChild ? '20px' : '8px',
+                        fontSize: '11px',
+                        fontWeight: isPhase ? 700 : isParent ? 600 : 400,
+                        borderBottom: '1px solid #f1f5f9',
+                      }}>
+                        {task.isMilestone && <span style={{ color: barColor, marginRight: 2 }}>◆</span>}
+                        {task.name}
                       </td>
-                      <td className={`p-1 text-center ${leftCell || 'text-gray-600'}`}>{displayDays}d</td>
-                      <td className={`p-1 text-center ${leftCell || 'text-gray-600'}`}>{fmt(barDates.start)}</td>
-                      <td className={`p-1 text-center ${leftCell || 'text-gray-600'}`}>{fmt(barDates.finish)}</td>
+
+                      <td style={{
+                        background: isPhase ? '#111' : 'transparent',
+                        color: isPhase ? '#fff' : '#64748b',
+                        padding: '6px 4px',
+                        fontSize: '10px',
+                        textAlign: 'center',
+                        borderBottom: '1px solid #f1f5f9',
+                      }}>{displayDays}d</td>
+
+                      <td style={{
+                        background: isPhase ? '#111' : 'transparent',
+                        color: isPhase ? '#fff' : '#64748b',
+                        padding: '6px 4px',
+                        fontSize: '10px',
+                        textAlign: 'center',
+                        borderBottom: '1px solid #f1f5f9',
+                      }}>{fmt(barDates.start)}</td>
+
+                      <td style={{
+                        background: isPhase ? '#111' : 'transparent',
+                        color: isPhase ? '#fff' : '#64748b',
+                        padding: '6px 4px',
+                        fontSize: '10px',
+                        textAlign: 'center',
+                        borderBottom: '1px solid #f1f5f9',
+                      }}>{fmt(barDates.finish)}</td>
 
                       {weeks.map((_, colIndex) => {
                         const inBar = colIndex >= startCol && colIndex < endCol
                         const isBarStart = colIndex === startCol
                         const isBarEnd = colIndex === endCol - 1
 
-                        if (!inBar) {
-                          return (
-                            <td key={colIndex} className="border-l border-gray-100 bg-white p-0" />
-                          )
-                        }
-
-                        if (task.isMilestone && isBarStart) {
-                          return (
-                            <td key={colIndex} className="border-l border-gray-100 bg-white p-0" style={{ padding: '4px 2px', verticalAlign: 'middle' }}>
+                        return (
+                          <td key={colIndex} style={{
+                            background: '#fff',
+                            padding: '0 1px',
+                            borderBottom: '1px solid #f1f5f9',
+                            borderLeft: '1px solid #f1f5f9',
+                            position: 'relative',
+                            height: '36px',
+                          }}>
+                            {inBar && isBarStart && hasPredecessor && (
                               <div style={{
-                                width: 10, height: 10, margin: '0 auto',
+                                position: 'absolute',
+                                left: 0,
+                                top: '50%',
+                                width: 6,
+                                height: 6,
+                                borderTop: '2px solid #94a3b8',
+                                borderRight: '2px solid #94a3b8',
+                                transform: 'translateY(-50%) rotate(45deg)',
+                                zIndex: 2,
+                              }} />
+                            )}
+                            {inBar && task.isMilestone && isBarStart ? (
+                              <div style={{
+                                position: 'absolute',
+                                top: '50%',
+                                left: '50%',
+                                width: 10,
+                                height: 10,
                                 backgroundColor: barColor,
-                                transform: 'rotate(45deg)',
+                                transform: 'translate(-50%, -50%) rotate(45deg)',
                                 WebkitPrintColorAdjust: 'exact',
                                 printColorAdjust: 'exact',
                               } as React.CSSProperties} />
-                            </td>
-                          )
-                        }
-
-                        if (task.isMilestone) {
-                          return <td key={colIndex} className="border-l border-gray-100 bg-white p-0" />
-                        }
-
-                        return (
-                          <td key={colIndex} className="border-l border-gray-100 bg-white p-0" style={{ verticalAlign: 'middle' }}>
-                            <div
-                              className="print-gantt-bar"
-                              style={{
-                                height: isPhase ? 12 : isParent ? 9 : 8,
-                                margin: isPhase ? '6px 0' : '8px 2px',
-                                backgroundColor: barColor,
-                                borderRadius: isBarStart && isBarEnd ? 2
-                                  : isBarStart ? '2px 0 0 2px'
-                                  : isBarEnd ? '0 2px 2px 0'
-                                  : 0,
-                                WebkitPrintColorAdjust: 'exact',
-                                printColorAdjust: 'exact',
-                              } as React.CSSProperties}
-                            />
+                            ) : inBar && (
+                              <div
+                                className="print-gantt-bar"
+                                style={{
+                                  position: 'absolute',
+                                  top: '50%',
+                                  transform: 'translateY(-50%)',
+                                  left: isBarStart ? 4 : 0,
+                                  right: isBarEnd ? 4 : 0,
+                                  height: isPhase ? 12 : 10,
+                                  backgroundColor: isPhase ? '#111' : barColor,
+                                  borderRadius: isBarStart && isBarEnd ? 3
+                                    : isBarStart ? '3px 0 0 3px'
+                                    : isBarEnd ? '0 3px 3px 0'
+                                    : 0,
+                                  WebkitPrintColorAdjust: 'exact',
+                                  printColorAdjust: 'exact',
+                                } as React.CSSProperties}
+                              />
+                            )}
                           </td>
                         )
                       })}
