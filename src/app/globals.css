@@ -15,10 +15,24 @@
 * { box-sizing: border-box; }
 
 @media print {
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
   .no-print { display: none !important; }
   .print-only { display: block !important; }
+  .gantt-row-empty { display: none !important; }
   body { background: white; }
   @page { size: landscape; margin: 0.35in; }
+}
+
+.gantt-row-phase:hover {
+  background-color: #2d2d2d;
+  color: white;
+}
+.gantt-row-phase:hover .task-name {
+  color: white !important;
 }
 
 .print-only { display: none; }

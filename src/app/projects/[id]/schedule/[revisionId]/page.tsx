@@ -346,6 +346,20 @@ export default function GanttPage() {
     await loadRevision()
   }
 
+  async function cleanupOrphans() {
+    const res = await fetch(`/api/revisions/${revisionId}/cleanup`, { method: 'POST' })
+    const data = await res.json()
+    if (!res.ok) {
+      alert(data.error || 'Cleanup failed')
+      return
+    }
+    if (data.data?.deleted > 0) {
+      await loadRevision()
+    } else {
+      alert('No orphaned tasks found')
+    }
+  }
+
   async function copyTask(id: string) {
     await fetch(`/api/tasks/${id}/duplicate`, { method: 'POST' })
     await fetch(`/api/revisions/${revisionId}/recalculate`, { method: 'POST' })
@@ -474,13 +488,16 @@ export default function GanttPage() {
             className="px-3 py-1.5 text-xs font-semibold border border-red-200 text-red-600 rounded-lg hover:bg-red-50">+ Add Hold</button>
           <button onClick={() => setShowRevisionModal(true)}
             className="px-3 py-1.5 text-xs font-semibold border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50">Save Revision</button>
+          <button onClick={cleanupOrphans}
+            className="px-2 py-1.5 text-xs text-gray-400 border border-transparent rounded-lg hover:text-gray-600 hover:border-gray-200"
+            title="Remove disconnected tasks at end of schedule">Clean up</button>
           <div className="relative group">
             <button type="button" className="px-3 py-1.5 text-xs font-bold text-white rounded-lg" style={{ background: '#111' }}>
               Print PDF ▾
             </button>
             <div className="hidden group-hover:block group-focus-within:block absolute right-0 top-full mt-1 bg-white shadow-lg rounded-lg border border-gray-200 py-1 z-50 min-w-[220px]">
               <a
-                href={`/projects/${projectId}/schedule/${revisionId}/print`}
+                href={`/projects/${projectId}/schedule/${revisionId}/print?scale=${scale}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="block px-4 py-2 text-xs text-gray-700 hover:bg-gray-50"
@@ -488,7 +505,7 @@ export default function GanttPage() {
                 Full Schedule + Look-Ahead
               </a>
               <a
-                href={`/projects/${projectId}/schedule/${revisionId}/print?lookahead=false`}
+                href={`/projects/${projectId}/schedule/${revisionId}/print?scale=${scale}&lookahead=false`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="block px-4 py-2 text-xs text-gray-700 hover:bg-gray-50"
@@ -496,7 +513,7 @@ export default function GanttPage() {
                 Schedule Only
               </a>
               <a
-                href={`/projects/${projectId}/schedule/${revisionId}/print?schedule=false`}
+                href={`/projects/${projectId}/schedule/${revisionId}/print?scale=${scale}&schedule=false`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="block px-4 py-2 text-xs text-gray-700 hover:bg-gray-50"
@@ -590,10 +607,11 @@ export default function GanttPage() {
 
             return (
               <div key={task.id}
-                className={`group flex border-b border-gray-100 cursor-pointer hover:bg-blue-50/30 ${
-                  isPhase ? 'bg-gray-900 text-white font-bold' :
-                  isParent ? 'bg-blue-50 font-semibold text-blue-900' :
-                  isChild ? 'bg-white text-gray-700' : ''
+                className={`group gantt-row flex border-b border-gray-100 cursor-pointer ${
+                  isPhase ? 'gantt-row-phase bg-gray-900 text-white font-bold hover:bg-gray-800' :
+                  isParent ? 'bg-blue-50 font-semibold text-blue-900 hover:bg-blue-100' :
+                  isChild ? 'bg-white text-gray-700 hover:bg-blue-50/30' :
+                  'hover:bg-blue-50/30'
                 } ${task.isCritical ? 'ring-inset ring-1 ring-red-200' : ''} ${isDragging ? 'opacity-50' : ''} ${isDragOver ? 'bg-orange-50' : ''}`}
                 style={{height: ROW_H}}
                 onDragOver={e => { e.preventDefault(); setDragOverId(task.id) }}
@@ -621,7 +639,7 @@ export default function GanttPage() {
                     }`}
                       style={{ paddingLeft: isChild ? indentPx + 8 : indentPx }}>
                       {isMil && <span className="shrink-0" style={{color:barColor}}>◆</span>}
-                      <span className="truncate flex-1">{task.name}</span>
+                      <span className="task-name truncate flex-1">{task.name}</span>
                       <span className="shrink-0 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity no-print">
                         <button
                           type="button"
@@ -704,6 +722,23 @@ export default function GanttPage() {
               </div>
             )
           })}
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={`empty-${i}`} className="gantt-row gantt-row-empty flex border-b border-gray-100" style={{ height: ROW_H }}>
+              <div className="flex-shrink-0 border-r border-gray-200 flex items-center px-2" style={{ width: leftPanelWidth }}>
+                <div className="grid items-center gap-1 w-full text-xs text-gray-300"
+                  style={{ gridTemplateColumns: `${DRAG_COL - 4}px 24px ${nameColWidth}px 44px 76px 76px 72px` }}>
+                  <span />
+                  <span className="text-center">{renderedTasks.length + i + 1}</span>
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                </div>
+              </div>
+              <div className="flex-1" />
+            </div>
+          ))}
           </div>
         </div>
       </div>
