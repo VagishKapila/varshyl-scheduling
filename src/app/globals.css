@@ -66,6 +66,12 @@
   .print-schedule-table {
     page-break-before: avoid;
   }
+
+  .print-dep-svg {
+    overflow: visible !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
 }
 
 .gantt-row-phase:hover {
