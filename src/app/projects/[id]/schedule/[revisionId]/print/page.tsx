@@ -90,6 +90,23 @@ function taskNestingDepth(task: TaskRow, tasks: TaskRow[]): number {
   return depth
 }
 
+function getDisplayDuration(task: TaskRow, tasks: TaskRow[], saturdayWork = false): number {
+  const children = tasks.filter(t => t.parentTaskId === task.id)
+  if (children.length === 0) return task.durationDays
+
+  const { start: minStart, finish: maxFinish } = getBarDates(task, tasks)
+  let days = 0
+  const current = new Date(minStart)
+  while (current <= maxFinish) {
+    const dow = current.getDay()
+    if (dow === 0) { current.setDate(current.getDate() + 1); continue }
+    if (dow === 6 && !saturdayWork) { current.setDate(current.getDate() + 1); continue }
+    days++
+    current.setDate(current.getDate() + 1)
+  }
+  return Math.max(1, days)
+}
+
 function getTaskColumns(
   start: Date,
   finish: Date,
@@ -97,7 +114,7 @@ function getTaskColumns(
   totalWeeks: number,
 ): { startCol: number; endCol: number } {
   const startCol = Math.floor((start.getTime() - chartStart.getTime()) / MS_PER_WEEK)
-  const endCol = Math.ceil((finish.getTime() - chartStart.getTime()) / MS_PER_WEEK)
+  const endCol = Math.ceil((finish.getTime() - chartStart.getTime()) / MS_PER_WEEK) + 1
   return {
     startCol: Math.max(0, startCol),
     endCol: Math.min(totalWeeks, Math.max(endCol, startCol + 1)),
@@ -106,19 +123,25 @@ function getTaskColumns(
 
 function buildWeekColumns(tasks: TaskRow[]) {
   const today = startOfDay(new Date())
-  const allDates = tasks.flatMap(t => {
+  if (tasks.length === 0) {
+    const chartStart = startOfWeek(today, { weekStartsOn: 1 })
+    const weeks = [chartStart, addDays(chartStart, 7)]
+    return { weeks, chartStart }
+  }
+
+  const allStarts: Date[] = []
+  const allFinishes: Date[] = []
+  for (const t of tasks) {
     const { start, finish } = getBarDates(t, tasks)
-    return [start, finish]
-  })
-  const minDate = allDates.length
-    ? new Date(Math.min(...allDates.map(d => d.getTime())))
-    : today
-  const maxDate = allDates.length
-    ? new Date(Math.max(...allDates.map(d => d.getTime())))
-    : addDays(today, 90)
+    allStarts.push(start, parseDate(t.startDate))
+    allFinishes.push(finish, parseDate(t.finishDate))
+  }
+
+  const minDate = new Date(Math.min(...allStarts.map(d => d.getTime())))
+  const maxDate = new Date(Math.max(...allFinishes.map(d => d.getTime())))
 
   const chartStart = startOfWeek(addDays(minDate, -7), { weekStartsOn: 1 })
-  const chartEnd = addDays(maxDate, 14)
+  const chartEnd = addDays(maxDate, 21)
 
   const weeks: Date[] = []
   let current = new Date(chartStart)
@@ -341,38 +364,43 @@ export default function PrintPage() {
                   const barDates = getBarDates(task, tasks)
                   const { startCol, endCol } = getTaskColumns(barDates.start, barDates.finish, chartStart, totalWeeks)
                   const barColor = isPhase ? '#111111' : (COLOR_MAP[task.color] ?? '#2458ff')
-                  const rowBg = isPhase ? 'bg-gray-900' : isParent ? 'bg-blue-50' : 'bg-white'
-                  const textClass = isPhase ? 'text-white font-bold uppercase' : isParent ? 'font-semibold text-blue-900' : 'text-gray-700'
+                  const displayDays = getDisplayDuration(task, tasks, Boolean(project?.saturdayWork))
+                  const phaseLeft = 'bg-gray-900 text-white font-bold'
+                  const parentLeft = 'bg-blue-50 font-semibold text-blue-900'
+                  const leftCell = isPhase ? phaseLeft : isParent ? parentLeft : ''
+                  const nameClass = isPhase ? 'uppercase' : isParent ? 'font-semibold text-blue-900' : 'text-gray-700'
 
                   return (
                     <tr
                       key={task.id}
-                      className={`border-b border-gray-200 ${rowBg}`}
+                      className="border-b border-gray-200"
                       style={{ pageBreakInside: 'avoid', height: 22 }}
                     >
-                      <td className={`p-1 text-center ${isPhase ? 'text-gray-300' : 'text-gray-500'}`}>{taskIndex + 1}</td>
-                      <td className="p-1" style={{ paddingLeft: `${indent}px` }}>
-                        <span className={textClass}>
+                      <td className={`p-1 text-center ${leftCell || 'text-gray-500'}`}>{taskIndex + 1}</td>
+                      <td className={`p-1 ${leftCell}`} style={{ paddingLeft: `${indent}px` }}>
+                        <span className={nameClass}>
                           {task.isMilestone && <span style={{ color: barColor, marginRight: 2 }}>◆</span>}
                           {task.name}
                         </span>
                       </td>
-                      <td className={`p-1 text-center ${isPhase ? 'text-white font-bold' : 'text-gray-600'}`}>{task.durationDays}d</td>
-                      <td className={`p-1 text-center ${isPhase ? 'text-white' : 'text-gray-600'}`}>{fmt(parseDate(task.startDate))}</td>
-                      <td className={`p-1 text-center ${isPhase ? 'text-white' : 'text-gray-600'}`}>{fmt(parseDate(task.finishDate))}</td>
+                      <td className={`p-1 text-center ${leftCell || 'text-gray-600'}`}>{displayDays}d</td>
+                      <td className={`p-1 text-center ${leftCell || 'text-gray-600'}`}>{fmt(barDates.start)}</td>
+                      <td className={`p-1 text-center ${leftCell || 'text-gray-600'}`}>{fmt(barDates.finish)}</td>
 
                       {weeks.map((_, colIndex) => {
                         const inBar = colIndex >= startCol && colIndex < endCol
-                        if (!inBar) {
-                          return <td key={colIndex} className="border-l border-gray-100" style={{ padding: 0 }} />
-                        }
-
                         const isBarStart = colIndex === startCol
                         const isBarEnd = colIndex === endCol - 1
 
+                        if (!inBar) {
+                          return (
+                            <td key={colIndex} className="border-l border-gray-100 bg-white p-0" />
+                          )
+                        }
+
                         if (task.isMilestone && isBarStart) {
                           return (
-                            <td key={colIndex} className="border-l border-gray-100" style={{ padding: '4px 2px', verticalAlign: 'middle' }}>
+                            <td key={colIndex} className="border-l border-gray-100 bg-white p-0" style={{ padding: '4px 2px', verticalAlign: 'middle' }}>
                               <div style={{
                                 width: 10, height: 10, margin: '0 auto',
                                 backgroundColor: barColor,
@@ -385,19 +413,20 @@ export default function PrintPage() {
                         }
 
                         if (task.isMilestone) {
-                          return <td key={colIndex} className="border-l border-gray-100" style={{ padding: 0 }} />
+                          return <td key={colIndex} className="border-l border-gray-100 bg-white p-0" />
                         }
 
                         return (
-                          <td key={colIndex} className="border-l border-gray-100" style={{ padding: '3px 1px', verticalAlign: 'middle' }}>
+                          <td key={colIndex} className="border-l border-gray-100 bg-white p-0" style={{ verticalAlign: 'middle' }}>
                             <div
                               className="print-gantt-bar"
                               style={{
-                                height: isPhase ? 10 : isParent ? 9 : 8,
+                                height: isPhase ? 12 : isParent ? 9 : 8,
+                                margin: isPhase ? '6px 0' : '8px 2px',
                                 backgroundColor: barColor,
-                                borderRadius: isBarStart && isBarEnd ? 3
-                                  : isBarStart ? '3px 0 0 3px'
-                                  : isBarEnd ? '0 3px 3px 0'
+                                borderRadius: isBarStart && isBarEnd ? 2
+                                  : isBarStart ? '2px 0 0 2px'
+                                  : isBarEnd ? '0 2px 2px 0'
                                   : 0,
                                 WebkitPrintColorAdjust: 'exact',
                                 printColorAdjust: 'exact',

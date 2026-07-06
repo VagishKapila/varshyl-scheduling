@@ -37,17 +37,13 @@
     font-family: Arial, sans-serif;
   }
 
-  /* Phase rows MUST print dark */
-  tr.bg-gray-900 {
+  /* Phase rows — dark left cells only (chart cells use bg-white inline) */
+  td.bg-gray-900 {
     background-color: #111111 !important;
     color: white !important;
   }
 
-  tr.bg-gray-900 td {
-    color: white !important;
-  }
-
-  tr.bg-blue-50 {
+  td.bg-blue-50 {
     background-color: #e8edf5 !important;
   }
 
