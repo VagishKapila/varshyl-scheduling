@@ -15,16 +15,61 @@
 * { box-sizing: border-box; }
 
 @media print {
+  @page {
+    size: landscape;
+    margin: 0.5in;
+  }
+
   * {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
     color-adjust: exact !important;
   }
+
   .no-print { display: none !important; }
   .print-only { display: block !important; }
+  .print-toolbar { display: none !important; }
   .gantt-row-empty { display: none !important; }
   body { background: white; }
-  @page { size: landscape; margin: 0.35in; }
+
+  .print-page {
+    font-size: 9px;
+    font-family: Arial, sans-serif;
+  }
+
+  /* Phase rows MUST print dark */
+  tr.bg-gray-900 {
+    background-color: #111111 !important;
+    color: white !important;
+  }
+
+  tr.bg-gray-900 td {
+    color: white !important;
+  }
+
+  tr.bg-blue-50 {
+    background-color: #e8edf5 !important;
+  }
+
+  /* Bar divs MUST print with color */
+  .print-gantt-bar {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Keep rows together; header stays with first rows */
+  tr {
+    page-break-inside: avoid;
+  }
+
+  .print-header,
+  .print-legend {
+    page-break-after: avoid;
+  }
+
+  .print-schedule-table {
+    page-break-before: avoid;
+  }
 }
 
 .gantt-row-phase:hover {
