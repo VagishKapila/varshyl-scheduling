@@ -13,7 +13,6 @@ const COLOR_MAP: Record<string, string> = {
 const COL_WIDTH = 80 // px per week column
 const ROW_H = 36
 const LEFT_COLS_W = 376 // 24 + 220 + 28 + 52 + 52
-const HEADER_H = 28
 const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000
 
 type LookAheadEntry = {
@@ -146,40 +145,6 @@ function buildWeekColumns(tasks: TaskRow[]) {
   return { weeks, chartStart }
 }
 
-type DepLine = {
-  predRow: number
-  predEndCol: number
-  succRow: number
-  succStartCol: number
-}
-
-function buildDependencies(
-  tasks: TaskRow[],
-  chartStart: Date,
-  totalWeeks: number,
-): DepLine[] {
-  const taskMap = new Map(tasks.map(t => [t.id, t]))
-  const taskIndexMap = new Map(tasks.map((t, i) => [t.id, i]))
-
-  return tasks
-    .filter(t => t.predecessorTaskId && t.relationshipType !== 'Manual')
-    .map(t => {
-      const pred = taskMap.get(t.predecessorTaskId!)
-      if (!pred) return null
-      const predDates = getBarDates(pred, tasks)
-      const succDates = getBarDates(t, tasks)
-      const { endCol: predEndCol } = getTaskColumns(predDates.start, predDates.finish, chartStart, totalWeeks)
-      const { startCol: succStartCol } = getTaskColumns(succDates.start, succDates.finish, chartStart, totalWeeks)
-      return {
-        predRow: taskIndexMap.get(pred.id)!,
-        predEndCol,
-        succRow: taskIndexMap.get(t.id)!,
-        succStartCol,
-      }
-    })
-    .filter((d): d is DepLine => d !== null)
-}
-
 function LookAheadCell({
   taskId, field, value, placeholder = '—', onSaved,
 }: {
@@ -284,14 +249,13 @@ export default function PrintPage() {
     const parentIds = new Set(tasks.filter(t => t.parentTaskId).map(t => t.parentTaskId!))
     const { weeks, chartStart } = buildWeekColumns(tasks)
     const totalWeeks = weeks.length
-    const dependencies = buildDependencies(tasks, chartStart, totalWeeks)
-    return { tasks, parentIds, weeks, chartStart, totalWeeks, dependencies, today: startOfDay(new Date()) }
+    return { tasks, parentIds, weeks, chartStart, totalWeeks, today: startOfDay(new Date()) }
   }, [revision])
 
   if (loading) return <div className="p-8 text-gray-400">Loading…</div>
   if (notFound || !revision || !scheduleData) return <div className="p-8 text-red-500">Revision not found</div>
 
-  const { tasks, parentIds, weeks, chartStart, totalWeeks, dependencies, today } = scheduleData
+  const { tasks, parentIds, weeks, chartStart, totalWeeks, today } = scheduleData
   const project = revision.project
   const company = project?.company
   const twoWeekCutoff = startOfDay(addDays(today, 14))
@@ -353,7 +317,7 @@ export default function PrintPage() {
             ))}
           </div>
 
-          <div className="print-schedule-table" style={{ overflowX: 'auto', position: 'relative' }}>
+          <div className="print-schedule-table" style={{ overflowX: 'auto' }}>
             <table className="w-full border-collapse text-xs" style={{ tableLayout: 'fixed', width: `${LEFT_COLS_W + totalWeeks * COL_WIDTH}px` }}>
               <colgroup>
                 <col style={{ width: '24px' }} />
@@ -453,7 +417,7 @@ export default function PrintPage() {
                             background: '#fff',
                             padding: 0,
                             borderBottom: '1px solid #f1f5f9',
-                            borderLeft: inBar ? 'none' : '1px solid #f1f5f9',
+                            borderLeft: inBar ? 'none' : '0.5px solid #e2e8f0',
                             position: 'relative',
                             height: ROW_H,
                           }}>
@@ -478,7 +442,7 @@ export default function PrintPage() {
                                   transform: 'translateY(-50%)',
                                   left: isBarStart ? 4 : 0,
                                   right: isBarEnd ? 4 : 0,
-                                  height: isPhase ? 12 : 10,
+                                  height: isPhase ? 14 : 10,
                                   backgroundColor: isPhase ? '#111' : barColor,
                                   borderRadius: isBarStart && isBarEnd ? 3
                                     : isBarStart ? '3px 0 0 3px'
@@ -497,44 +461,6 @@ export default function PrintPage() {
                 })}
               </tbody>
             </table>
-
-            <svg
-              className="print-dep-svg"
-              width={totalWeeks * COL_WIDTH}
-              height={tasks.length * ROW_H}
-              style={{
-                position: 'absolute',
-                top: HEADER_H,
-                left: LEFT_COLS_W,
-                pointerEvents: 'none',
-                overflow: 'visible',
-                zIndex: 5,
-              }}
-              aria-hidden
-            >
-              <defs>
-                <marker id="dep-arrow" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto">
-                  <path d="M0,0 L5,2.5 L0,5 Z" fill="#94a3b8" />
-                </marker>
-              </defs>
-              {dependencies.map((dep, i) => {
-                const x1 = dep.predEndCol * COL_WIDTH - 4
-                const y1 = dep.predRow * ROW_H + ROW_H / 2
-                const x2 = dep.succStartCol * COL_WIDTH + 4
-                const y2 = dep.succRow * ROW_H + ROW_H / 2
-                const midX = x1 + Math.sign(x2 - x1) * Math.max(12, Math.abs(x2 - x1) / 2)
-                return (
-                  <path
-                    key={i}
-                    d={`M ${x1} ${y1} H ${midX} V ${y2} H ${x2}`}
-                    stroke="#94a3b8"
-                    strokeWidth={1}
-                    fill="none"
-                    markerEnd="url(#dep-arrow)"
-                  />
-                )
-              })}
-            </svg>
           </div>
         </>
       )}
