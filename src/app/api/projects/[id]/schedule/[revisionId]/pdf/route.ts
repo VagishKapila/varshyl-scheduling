@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import puppeteer from 'puppeteer-core'
+import chromium from '@sparticuz/chromium'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -52,28 +54,11 @@ export async function GET(
   const printUrl = `${baseUrl}/projects/${id}/schedule/${revisionId}?pdfmode=true`
 
   try {
-    const puppeteer = await import('puppeteer-core')
-    const chromium = await import('@sparticuz/chromium')
+    chromium.setGraphicsMode = false
 
-    chromium.default.setGraphicsMode = false
-
-    const executablePath =
-      process.env.PUPPETEER_EXECUTABLE_PATH ??
-      process.env.CHROME_BIN ??
-      await chromium.default.executablePath()
-
-    const browser = await puppeteer.default.launch({
-      args: [
-        ...chromium.default.args,
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-zygote',
-        '--single-process',
-        '--disable-extensions',
-      ],
-      executablePath,
+    const browser = await puppeteer.launch({
+      args: chromium.args,
+      executablePath: await chromium.executablePath(),
       headless: true,
     })
 
