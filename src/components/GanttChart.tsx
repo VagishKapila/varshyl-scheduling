@@ -55,9 +55,11 @@ export function GanttChart({
 
   const today = new Date()
   const minDate = tasks.length ? new Date(Math.min(...tasks.map(t => parseDate(t.startDate).getTime()))) : today
-  const maxDate = tasks.length ? new Date(Math.max(...tasks.map(t => parseDate(t.finishDate).getTime()))) : addDays(today, 90)
+  const lastTaskDate = tasks.length
+    ? new Date(Math.max(...tasks.map(t => parseDate(t.finishDate).getTime())))
+    : addDays(today, 90)
   const ganttStart = startOfWeek(addDays(minDate, -7))
-  const ganttEnd = addDays(maxDate, 30)
+  const ganttEnd = addDays(lastTaskDate, 7)
   const totalDays = differenceInCalendarDays(ganttEnd, ganttStart)
 
   function dayOffset(date: Date | string) {
@@ -223,7 +225,7 @@ export function GanttChart({
                       style={{ paddingLeft: isChild ? indentPx + 8 : indentPx }}
                     >
                       {isMil && <span className="shrink-0" style={{ color: barColor }}>◆</span>}
-                      <span className="task-name truncate flex-1" style={{ color: nameColor }}>{task.name}</span>
+                      <span className="task-name truncate flex-1 block" style={{ color: nameColor }} title={task.name}>{task.name}</span>
                       {!printMode && (
                         <span className="shrink-0 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity no-print">
                           <button

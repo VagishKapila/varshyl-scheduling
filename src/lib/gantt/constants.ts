@@ -22,7 +22,7 @@ export const SCALE_CONFIG: Record<string, {
 export const NAME_COL_STORAGE = 'gantt-name-col-width'
 export const NAME_COL_MIN = 180
 export const NAME_COL_MAX = 400
-export const NAME_COL_DEFAULT = 220
+export const NAME_COL_DEFAULT = 260
 export const DRAG_COL = 20
 export const ROW_H = 32
 export const LEFT_FIXED_COLS = DRAG_COL + 28 + 48 + 76 + 76 + 72
