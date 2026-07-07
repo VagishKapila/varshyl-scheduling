@@ -1,0 +1,147 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id           String        @id @default(cuid())
+  email        String        @unique
+  name         String
+  passwordHash String
+  createdAt    DateTime      @default(now())
+  companyUsers CompanyUser[]
+}
+
+model Company {
+  id         String        @id @default(cuid())
+  name       String
+  logoUrl    String?
+  footerText String?
+  createdAt  DateTime      @default(now())
+  users      CompanyUser[]
+  projects   Project[]
+  templates  Template[]
+  files      File[]
+}
+
+model CompanyUser {
+  id        String  @id @default(cuid())
+  companyId String
+  userId    String
+  role      String  @default("member")
+  company   Company @relation(fields: [companyId], references: [id])
+  user      User    @relation(fields: [userId], references: [id])
+}
+
+model Project {
+  id            String             @id @default(cuid())
+  companyId     String
+  name          String
+  clientName    String
+  address       String
+  projectType   String
+  startDate     DateTime
+  targetEndDate DateTime
+  permitStatus  String
+  permitDays    Int                @default(0)
+  saturdayWork  Boolean            @default(false)
+  doubleShift   Boolean            @default(false)
+  status        String             @default("active")
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  company       Company            @relation(fields: [companyId], references: [id])
+  revisions     ScheduleRevision[]
+  files         File[]
+}
+
+model ScheduleRevision {
+  id           String         @id @default(cuid())
+  projectId    String
+  revisionName String
+  notes        String?
+  createdBy    String
+  createdAt    DateTime       @default(now())
+  isCurrent    Boolean        @default(true)
+  project      Project        @relation(fields: [projectId], references: [id])
+  tasks        ScheduleTask[]
+}
+
+model ScheduleTask {
+  id                String           @id @default(cuid())
+  revisionId        String
+  parentTaskId      String?
+  sortOrder         Int
+  level             Int              @default(1)
+  name              String
+  durationDays      Int              @default(1)
+  startDate         DateTime
+  finishDate        DateTime
+  relationshipType  String           @default("FS")
+  predecessorTaskId String?
+  lagDays           Int              @default(0)
+  color             String           @default("blue")
+  responsibleParty  String?
+  notes             String?
+  isPermitRelated   Boolean          @default(false)
+  isCritical        Boolean          @default(false)
+  isMilestone       Boolean          @default(false)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  revision          ScheduleRevision @relation(fields: [revisionId], references: [id])
+  lookAheadEntry    LookAheadEntry?
+}
+
+model LookAheadEntry {
+  id          String       @id @default(cuid())
+  taskId      String       @unique
+  trade       String?
+  constraints String?
+  inspections String?
+  materials   String?
+  updatedAt   DateTime     @updatedAt
+  task        ScheduleTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+}
+
+model Template {
+  id          String         @id @default(cuid())
+  companyId   String?
+  name        String
+  projectType String
+  isPublic    Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+  company     Company?       @relation(fields: [companyId], references: [id])
+  tasks       TemplateTask[]
+}
+
+model TemplateTask {
+  id                        String   @id @default(cuid())
+  templateId                String
+  parentTaskId              String?
+  sortOrder                 Int
+  level                     Int      @default(1)
+  name                      String
+  defaultDurationDays       Int      @default(5)
+  relationshipType          String   @default("FS")
+  predecessorTemplateTaskId String?
+  lagDays                   Int      @default(0)
+  color                     String   @default("blue")
+  responsibleParty          String?
+  isPermitRelated           Boolean  @default(false)
+  isDefaultChecked          Boolean  @default(true)
+  template                  Template @relation(fields: [templateId], references: [id])
+}
+
+model File {
+  id        String   @id @default(cuid())
+  companyId String
+  projectId String?
+  fileType  String
+  url       String
+  createdAt DateTime @default(now())
+  company   Company  @relation(fields: [companyId], references: [id])
+  project   Project? @relation(fields: [projectId], references: [id])
+}
