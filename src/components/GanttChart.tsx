@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useRef, useState } from 'react'
 import { format, addDays, differenceInCalendarDays, startOfWeek } from 'date-fns'
 import { parseDate, fmt } from '@/lib/dates'
 import { COLOR_HEX, type TaskColor } from '@/lib/task-color'
@@ -17,6 +18,23 @@ const HEADER_H_WEEKLY = 48
 const PHASE_BAR_H = 14
 const CHILD_BAR_H = 10
 const BAR_RADIUS = 3
+const MIN_TICK_COL_PX = 60
+const MAX_TICK_COL_PX = 200
+const PRINT_CHART_WIDTH = 931
+
+function tickHeaderLabel(
+  tick: Date,
+  tickColumnWidth: number,
+  scale: string,
+  formatLabel: (d: Date) => string,
+): string | null {
+  if (tickColumnWidth < 40) return null
+  if (tickColumnWidth >= 60) {
+    if (scale === 'weekly') return format(tick, 'MMM d')
+    return formatLabel(tick)
+  }
+  return format(tick, 'd')
+}
 
 function rowBackground(rowIndex: number) {
   return rowIndex % 2 === 0 ? '#ffffff' : '#f8fafc'
@@ -88,11 +106,13 @@ export function GanttChart({
   onDeleteTask,
   onDragEnd,
 }: GanttChartProps) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [chartWidth, setChartWidth] = useState(0)
+
   const renderedTasks = buildRenderOrder(tasks)
   const displayNumbers = computeDisplayNumbers(renderedTasks)
   const leftPanelWidth = LEFT_FIXED_COLS + nameColWidth
   const scaleConfig = SCALE_CONFIG[scale] || SCALE_CONFIG.weekly
-  const COL_PX = scaleConfig.colPx
 
   const today = new Date()
   const minDate = tasks.length ? new Date(Math.min(...tasks.map(t => parseDate(t.startDate).getTime()))) : today
@@ -113,6 +133,28 @@ export function GanttChart({
     ticks.push(new Date(tickCur))
     tickCur = addDays(tickCur, scaleConfig.stepDays)
   }
+
+  useEffect(() => {
+    if (printMode) return
+    const el = containerRef.current
+    if (!el) return
+    const measure = () => setChartWidth(Math.max(0, el.clientWidth - leftPanelWidth))
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    window.addEventListener('resize', measure)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [printMode, leftPanelWidth])
+
+  const availableChartWidth = printMode ? PRINT_CHART_WIDTH : chartWidth
+  const fallbackTickColPx = scaleConfig.colPx * scaleConfig.stepDays
+  const tickColumnWidth = availableChartWidth > 0 && ticks.length > 0
+    ? Math.min(MAX_TICK_COL_PX, Math.max(MIN_TICK_COL_PX, Math.floor(availableChartWidth / ticks.length)))
+    : Math.max(MIN_TICK_COL_PX, fallbackTickColPx)
+  const COL_PX = tickColumnWidth / scaleConfig.stepDays
 
   const isWeeklyHeader = scale === 'weekly'
   const headerHeight = isWeeklyHeader ? HEADER_H_WEEKLY : HEADER_H_SINGLE
@@ -157,7 +199,7 @@ export function GanttChart({
   })
 
   return (
-    <div className={printMode ? 'overflow-visible' : 'flex-1 overflow-auto'}>
+    <div ref={containerRef} className={printMode ? 'overflow-visible' : 'flex-1 overflow-auto'}>
       <div style={{ minWidth: leftPanelWidth + totalDays * COL_PX }}>
         <div
           className={`flex ${printMode ? '' : 'sticky top-0 z-10'} border-b border-gray-200`}
@@ -187,7 +229,10 @@ export function GanttChart({
               <span>Days</span><span>Start</span><span>Finish</span><span>Party</span>
             </div>
           </div>
-          <div className="relative flex-1 bg-gray-50" style={{ height: headerHeight }}>
+          <div
+            className="relative flex-shrink-0 bg-gray-50"
+            style={{ height: headerHeight, width: ganttWidth }}
+          >
             {isWeeklyHeader ? (
               <>
                 <div className="relative" style={{ height: 22 }}>
@@ -210,32 +255,40 @@ export function GanttChart({
                   ))}
                 </div>
                 <div className="relative border-t border-gray-200" style={{ height: 26 }}>
-                  {ticks.map((tick, i) => (
-                    <div
-                      key={`week-day-${i}`}
-                      className="absolute font-medium"
-                      style={{
-                        left: dayOffset(tick) * COL_PX + 2,
-                        top: 6,
-                        fontSize: 9,
-                        color: '#64748b',
-                      }}
-                    >
-                      {format(tick, 'd')}
-                    </div>
-                  ))}
+                  {ticks.map((tick, i) => {
+                    const label = tickHeaderLabel(tick, tickColumnWidth, scale, scaleConfig.formatLabel)
+                    if (!label) return null
+                    return (
+                      <div
+                        key={`week-day-${i}`}
+                        className="absolute font-medium whitespace-nowrap"
+                        style={{
+                          left: dayOffset(tick) * COL_PX + 2,
+                          top: 6,
+                          fontSize: 9,
+                          color: '#64748b',
+                        }}
+                      >
+                        {label}
+                      </div>
+                    )
+                  })}
                 </div>
               </>
             ) : (
-              ticks.map((tick, i) => (
-                <div
-                  key={`${scale}-${i}`}
-                  className="absolute text-xs text-gray-400 font-medium whitespace-nowrap"
-                  style={{ left: dayOffset(tick) * COL_PX + 2, top: 12 }}
-                >
-                  {scaleConfig.formatLabel(tick)}
-                </div>
-              ))
+              ticks.map((tick, i) => {
+                const label = tickHeaderLabel(tick, tickColumnWidth, scale, scaleConfig.formatLabel)
+                if (!label) return null
+                return (
+                  <div
+                    key={`${scale}-${i}`}
+                    className="absolute text-xs text-gray-400 font-medium whitespace-nowrap"
+                    style={{ left: dayOffset(tick) * COL_PX + 2, top: 12 }}
+                  >
+                    {label}
+                  </div>
+                )
+              })
             )}
             {!printMode && (
               <div
@@ -438,7 +491,7 @@ export function GanttChart({
                   <span /><span /><span /><span />
                 </div>
               </div>
-              <div className="flex-1" style={{ background: altBg }} />
+              <div style={{ width: ganttWidth, minWidth: ganttWidth, background: altBg }} />
             </div>
             )
           })}
