@@ -577,19 +577,22 @@ export default function PrintPage() {
               aria-hidden
             >
               <defs>
-                <marker id="gantt-arrow" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto">
-                  <path d="M0,0 L5,2.5 L0,5 Z" fill="#94a3b8" />
+                <marker id="fs-arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+                  <path d="M0,0 L8,4 L0,8 Z" fill="#64748b" />
                 </marker>
               </defs>
               {fsConnections.map((c, i) => (
-                <path
-                  key={i}
-                  d={c.path}
-                  stroke="#94a3b8"
-                  strokeWidth={1}
-                  fill="none"
-                  markerEnd="url(#gantt-arrow)"
-                />
+                <g key={i}>
+                  <path
+                    d={c.path}
+                    stroke="#64748b"
+                    strokeWidth={1.5}
+                    fill="none"
+                    markerEnd="url(#fs-arrow)"
+                  />
+                  <circle cx={c.x1} cy={c.y1} r={2.5} fill="#94a3b8" />
+                  <circle cx={c.x2} cy={c.y2} r={2.5} fill="#94a3b8" />
+                </g>
               ))}
             </svg>
           </div>
