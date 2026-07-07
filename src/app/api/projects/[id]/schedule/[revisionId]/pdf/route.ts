@@ -61,6 +61,7 @@ export async function GET(
         '--disable-dev-shm-usage',
         '--disable-gpu',
         '--single-process',
+        '--no-zygote',
       ],
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
       headless: true,
