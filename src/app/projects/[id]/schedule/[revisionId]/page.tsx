@@ -591,7 +591,7 @@ export default function GanttPage() {
           <div className="relative">
             <svg
               className="absolute pointer-events-none no-print"
-              style={{ left: leftPanelWidth, top: 0, width: ganttWidth, height: ganttHeight, zIndex: 1 }}
+              style={{ left: leftPanelWidth, top: 0, width: ganttWidth, height: ganttHeight, zIndex: 10 }}
               aria-hidden
             >
               {dependencyLines}
@@ -626,7 +626,7 @@ export default function GanttPage() {
                 onDrop={e => { e.preventDefault(); e.stopPropagation(); handleDrop(task.id) }}
                 onClick={() => openTaskDrawer(task.id)}>
                 {/* Left table */}
-                <div className={`flex-shrink-0 border-r border-gray-200 flex items-center px-2 ${
+                <div className={`flex-shrink-0 border-r border-gray-200 flex items-center px-2 gantt-left-panel ${
                   isPhase ? 'bg-gray-900 text-white hover:bg-gray-800' : ''
                 }`}
                   style={{width: leftPanelWidth}}>
@@ -670,7 +670,10 @@ export default function GanttPage() {
                 </div>
 
                 {/* Gantt bar */}
-                <div className="relative flex-1 bg-white" style={{height: ROW_H, zIndex: 2 }}>
+                <div
+                  className={`relative flex-shrink-0 ${isPhase ? 'bg-white' : ''}`}
+                  style={{ height: ROW_H, width: ganttWidth, zIndex: 2 }}
+                >
                   {ticks.map((tick, wi) => (
                     <div key={`grid-${scale}-${wi}`} className="absolute top-0 bottom-0 w-px bg-gray-100"
                       style={{left: dayOffset(tick) * COL_PX}} />

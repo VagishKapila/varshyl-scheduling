@@ -94,11 +94,11 @@ body.pdfmode {
   background: white;
 }
 
-.gantt-row-phase:hover {
+.gantt-row-phase:hover .gantt-left-panel {
   background-color: #2d2d2d;
   color: white;
 }
-.gantt-row-phase:hover .task-name {
+.gantt-row-phase:hover .gantt-left-panel .task-name {
   color: white !important;
 }
 
