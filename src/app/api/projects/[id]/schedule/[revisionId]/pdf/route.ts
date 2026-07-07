@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { existsSync } from 'fs'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import puppeteer from 'puppeteer-core'
-import chromium from '@sparticuz/chromium'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -25,15 +23,6 @@ function parseRequestCookies(cookieHeader: string, baseUrl: string) {
       return { name, value, url: url.origin }
     })
     .filter((c): c is { name: string; value: string; url: string } => c !== null)
-}
-
-async function resolveExecutablePath(): Promise<string> {
-  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-    return process.env.PUPPETEER_EXECUTABLE_PATH
-  }
-  if (existsSync('/usr/bin/chromium')) return '/usr/bin/chromium'
-  if (existsSync('/usr/bin/chromium-browser')) return '/usr/bin/chromium-browser'
-  return chromium.executablePath()
 }
 
 export async function GET(
@@ -65,8 +54,6 @@ export async function GET(
   const gantUrl = `${baseUrl}/projects/${id}/schedule/${revisionId}?pdfmode=true`
 
   try {
-    chromium.setGraphicsMode = false
-
     const browser = await puppeteer.launch({
       args: [
         '--no-sandbox',
@@ -75,7 +62,7 @@ export async function GET(
         '--disable-gpu',
         '--single-process',
       ],
-      executablePath: await resolveExecutablePath(),
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
       headless: true,
     })
 
