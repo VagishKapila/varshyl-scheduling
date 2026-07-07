@@ -10,10 +10,73 @@ const COLOR_MAP: Record<string, string> = {
   teal: '#168c9a', purple: '#7a3cff', black: '#111111',
 }
 
-const COL_WIDTH = 80 // px per week column
+const COL_WIDTH = 80 // px per week column — must match colgroup width
+const COL_W = COL_WIDTH
 const ROW_H = 36
+const HEADER_H = ROW_H
 const LEFT_COLS_W = 376 // 24 + 220 + 28 + 52 + 52
+const BAR_H = 10
+const BAR_Y_OFFSET = (ROW_H - BAR_H) / 2
 const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000
+
+interface BarPosition {
+  taskId: string
+  rowIndex: number
+  startCol: number
+  endCol: number
+  predecessorTaskId: string | null
+  relationshipType: string
+}
+
+type FsConnection = { x1: number; y1: number; x2: number; y2: number }
+
+function barRightX(bp: BarPosition): number {
+  return bp.endCol * COL_W - 2
+}
+
+function barLeftX(bp: BarPosition): number {
+  return bp.startCol * COL_W + 2
+}
+
+function barCenterY(bp: BarPosition): number {
+  return bp.rowIndex * ROW_H + BAR_Y_OFFSET + BAR_H / 2
+}
+
+function buildBarPositions(tasks: TaskRow[], chartStart: Date, totalWeeks: number): BarPosition[] {
+  return tasks.map((task, rowIndex) => {
+    const barDates = getBarDates(task, tasks)
+    const { startCol, endCol } = getTaskColumns(barDates.start, barDates.finish, chartStart, totalWeeks)
+    return {
+      taskId: task.id,
+      rowIndex,
+      startCol,
+      endCol,
+      predecessorTaskId: task.predecessorTaskId,
+      relationshipType: task.relationshipType,
+    }
+  })
+}
+
+function buildFsConnections(barPositions: BarPosition[]): FsConnection[] {
+  const barPosMap: Record<string, BarPosition> = {}
+  barPositions.forEach(bp => { barPosMap[bp.taskId] = bp })
+
+  return barPositions
+    .filter(bp =>
+      bp.predecessorTaskId &&
+      bp.relationshipType === 'FS' &&
+      barPosMap[bp.predecessorTaskId],
+    )
+    .map(bp => {
+      const pred = barPosMap[bp.predecessorTaskId!]
+      return {
+        x1: barRightX(pred),
+        y1: barCenterY(pred),
+        x2: barLeftX(bp),
+        y2: barCenterY(bp),
+      }
+    })
+}
 
 type LookAheadEntry = {
   trade?: string | null
@@ -249,13 +312,15 @@ export default function PrintPage() {
     const parentIds = new Set(tasks.filter(t => t.parentTaskId).map(t => t.parentTaskId!))
     const { weeks, chartStart } = buildWeekColumns(tasks)
     const totalWeeks = weeks.length
-    return { tasks, parentIds, weeks, chartStart, totalWeeks, today: startOfDay(new Date()) }
+    const barPositions = buildBarPositions(tasks, chartStart, totalWeeks)
+    const fsConnections = buildFsConnections(barPositions)
+    return { tasks, parentIds, weeks, chartStart, totalWeeks, fsConnections, today: startOfDay(new Date()) }
   }, [revision])
 
   if (loading) return <div className="p-8 text-gray-400">Loading…</div>
   if (notFound || !revision || !scheduleData) return <div className="p-8 text-red-500">Revision not found</div>
 
-  const { tasks, parentIds, weeks, chartStart, totalWeeks, today } = scheduleData
+  const { tasks, parentIds, weeks, chartStart, totalWeeks, fsConnections, today } = scheduleData
   const project = revision.project
   const company = project?.company
   const twoWeekCutoff = startOfDay(addDays(today, 14))
@@ -317,7 +382,7 @@ export default function PrintPage() {
             ))}
           </div>
 
-          <div className="print-schedule-table" style={{ overflowX: 'auto' }}>
+          <div className="print-schedule-table" style={{ overflowX: 'auto', position: 'relative' }}>
             <table className="w-full border-collapse text-xs" style={{ tableLayout: 'fixed', width: `${LEFT_COLS_W + totalWeeks * COL_WIDTH}px` }}>
               <colgroup>
                 <col style={{ width: '24px' }} />
@@ -461,6 +526,42 @@ export default function PrintPage() {
                 })}
               </tbody>
             </table>
+
+            <svg
+              className="print-fs-connectors"
+              width={totalWeeks * COL_W}
+              height={tasks.length * ROW_H}
+              style={{
+                position: 'absolute',
+                top: HEADER_H,
+                left: LEFT_COLS_W,
+                pointerEvents: 'none',
+                overflow: 'visible',
+                zIndex: 10,
+                WebkitPrintColorAdjust: 'exact',
+                printColorAdjust: 'exact',
+              } as React.CSSProperties}
+              aria-hidden
+            >
+              <defs>
+                <marker id="gantt-arrow" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto">
+                  <path d="M0,0 L5,2.5 L0,5 Z" fill="#94a3b8" />
+                </marker>
+              </defs>
+              {fsConnections.map((c, i) => {
+                const elbowX = c.x1 + 8
+                return (
+                  <path
+                    key={i}
+                    d={`M ${c.x1} ${c.y1} H ${elbowX} V ${c.y2} H ${c.x2}`}
+                    stroke="#94a3b8"
+                    strokeWidth={1}
+                    fill="none"
+                    markerEnd="url(#gantt-arrow)"
+                  />
+                )
+              })}
+            </svg>
           </div>
         </>
       )}

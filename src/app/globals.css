@@ -67,10 +67,18 @@
     page-break-before: avoid;
   }
 
-  .print-dep-svg {
+  .print-fs-connectors {
     overflow: visible !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
+  }
+
+  .print-fs-connectors path {
+    stroke: #94a3b8 !important;
+  }
+
+  .print-fs-connectors marker path {
+    fill: #94a3b8 !important;
   }
 }
 
