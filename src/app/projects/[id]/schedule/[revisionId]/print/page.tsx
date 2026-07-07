@@ -10,13 +10,17 @@ const COLOR_MAP: Record<string, string> = {
   teal: '#168c9a', purple: '#7a3cff', black: '#111111',
 }
 
-const COL_WIDTH = 80 // px per week column — must match colgroup width
-const COL_W = COL_WIDTH
+const COL_WIDTHS = {
+  num: 28,
+  name: 200,
+  days: 36,
+  start: 58,
+  finish: 58,
+} as const
+const LEFT_PANEL_WIDTH = Object.values(COL_WIDTHS).reduce((a, b) => a + b, 0) // 380px
+const CHART_COL_W = 80 // must match week <col> width exactly
 const ROW_H = 36
-const HEADER_H = ROW_H
-const LEFT_COLS_W = 376 // 24 + 220 + 28 + 52 + 52
-const BAR_H = 10
-const BAR_Y_OFFSET = (ROW_H - BAR_H) / 2
+const HEADER_ROW_H = ROW_H
 const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000
 
 interface BarPosition {
@@ -28,18 +32,26 @@ interface BarPosition {
   relationshipType: string
 }
 
-type FsConnection = { x1: number; y1: number; x2: number; y2: number }
+type FsConnection = {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  path: string
+  predName: string
+  succName: string
+}
 
 function barRightX(bp: BarPosition): number {
-  return bp.endCol * COL_W - 2
+  return bp.endCol * CHART_COL_W - 4
 }
 
 function barLeftX(bp: BarPosition): number {
-  return bp.startCol * COL_W + 2
+  return bp.startCol * CHART_COL_W + 4
 }
 
 function barCenterY(bp: BarPosition): number {
-  return bp.rowIndex * ROW_H + BAR_Y_OFFSET + BAR_H / 2
+  return bp.rowIndex * ROW_H + ROW_H / 2
 }
 
 function buildBarPositions(tasks: TaskRow[], chartStart: Date, totalWeeks: number): BarPosition[] {
@@ -57,11 +69,12 @@ function buildBarPositions(tasks: TaskRow[], chartStart: Date, totalWeeks: numbe
   })
 }
 
-function buildFsConnections(barPositions: BarPosition[]): FsConnection[] {
+function buildFsConnections(barPositions: BarPosition[], tasks: TaskRow[]): FsConnection[] {
   const barPosMap: Record<string, BarPosition> = {}
+  const taskMap = new Map(tasks.map(t => [t.id, t]))
   barPositions.forEach(bp => { barPosMap[bp.taskId] = bp })
 
-  return barPositions
+  const connections = barPositions
     .filter(bp =>
       bp.predecessorTaskId &&
       bp.relationshipType === 'FS' &&
@@ -69,13 +82,37 @@ function buildFsConnections(barPositions: BarPosition[]): FsConnection[] {
     )
     .map(bp => {
       const pred = barPosMap[bp.predecessorTaskId!]
+      const x1 = barRightX(pred)
+      const y1 = barCenterY(pred)
+      const x2 = barLeftX(bp)
+      const y2 = barCenterY(bp)
+      const jog = x1 + 10
+      const path = `M ${x1} ${y1} H ${jog} V ${y2} H ${x2}`
       return {
-        x1: barRightX(pred),
-        y1: barCenterY(pred),
-        x2: barLeftX(bp),
-        y2: barCenterY(bp),
+        x1,
+        y1,
+        x2,
+        y2,
+        path,
+        predName: taskMap.get(pred.taskId)?.name ?? pred.taskId,
+        succName: taskMap.get(bp.taskId)?.name ?? bp.taskId,
       }
     })
+
+  if (connections.length > 0) {
+    const c = connections[0]
+    console.log('[print FS connector]', {
+      pred: c.predName,
+      barRightX: c.x1,
+      predCenterY: c.y1,
+      succ: c.succName,
+      barLeftX: c.x2,
+      succCenterY: c.y2,
+      path: c.path,
+    })
+  }
+
+  return connections
 }
 
 type LookAheadEntry = {
@@ -313,7 +350,7 @@ export default function PrintPage() {
     const { weeks, chartStart } = buildWeekColumns(tasks)
     const totalWeeks = weeks.length
     const barPositions = buildBarPositions(tasks, chartStart, totalWeeks)
-    const fsConnections = buildFsConnections(barPositions)
+    const fsConnections = buildFsConnections(barPositions, tasks)
     return { tasks, parentIds, weeks, chartStart, totalWeeks, fsConnections, today: startOfDay(new Date()) }
   }, [revision])
 
@@ -383,15 +420,15 @@ export default function PrintPage() {
           </div>
 
           <div className="print-schedule-table" style={{ overflowX: 'auto', position: 'relative' }}>
-            <table className="w-full border-collapse text-xs" style={{ tableLayout: 'fixed', width: `${LEFT_COLS_W + totalWeeks * COL_WIDTH}px` }}>
+            <table className="w-full border-collapse text-xs" style={{ tableLayout: 'fixed', width: `${LEFT_PANEL_WIDTH + totalWeeks * CHART_COL_W}px` }}>
               <colgroup>
-                <col style={{ width: '24px' }} />
-                <col style={{ width: '220px' }} />
-                <col style={{ width: '28px' }} />
-                <col style={{ width: '52px' }} />
-                <col style={{ width: '52px' }} />
+                <col style={{ width: `${COL_WIDTHS.num}px` }} />
+                <col style={{ width: `${COL_WIDTHS.name}px` }} />
+                <col style={{ width: `${COL_WIDTHS.days}px` }} />
+                <col style={{ width: `${COL_WIDTHS.start}px` }} />
+                <col style={{ width: `${COL_WIDTHS.finish}px` }} />
                 {weeks.map((_, i) => (
-                  <col key={i} style={{ width: `${COL_WIDTH}px` }} />
+                  <col key={i} style={{ width: `${CHART_COL_W}px` }} />
                 ))}
               </colgroup>
 
@@ -529,15 +566,15 @@ export default function PrintPage() {
 
             <svg
               className="print-fs-connectors"
-              width={totalWeeks * COL_W}
+              width={totalWeeks * CHART_COL_W}
               height={tasks.length * ROW_H}
               style={{
                 position: 'absolute',
-                top: HEADER_H,
-                left: LEFT_COLS_W,
+                top: HEADER_ROW_H,
+                left: LEFT_PANEL_WIDTH,
                 pointerEvents: 'none',
                 overflow: 'visible',
-                zIndex: 10,
+                zIndex: 20,
                 WebkitPrintColorAdjust: 'exact',
                 printColorAdjust: 'exact',
               } as React.CSSProperties}
@@ -548,19 +585,16 @@ export default function PrintPage() {
                   <path d="M0,0 L5,2.5 L0,5 Z" fill="#94a3b8" />
                 </marker>
               </defs>
-              {fsConnections.map((c, i) => {
-                const elbowX = c.x1 + 8
-                return (
-                  <path
-                    key={i}
-                    d={`M ${c.x1} ${c.y1} H ${elbowX} V ${c.y2} H ${c.x2}`}
-                    stroke="#94a3b8"
-                    strokeWidth={1}
-                    fill="none"
-                    markerEnd="url(#gantt-arrow)"
-                  />
-                )
-              })}
+              {fsConnections.map((c, i) => (
+                <path
+                  key={i}
+                  d={c.path}
+                  stroke="#94a3b8"
+                  strokeWidth={1}
+                  fill="none"
+                  markerEnd="url(#gantt-arrow)"
+                />
+              ))}
             </svg>
           </div>
         </>
