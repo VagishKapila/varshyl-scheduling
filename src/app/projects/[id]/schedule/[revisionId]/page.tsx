@@ -5,7 +5,8 @@ import Link from 'next/link'
 import { format, addDays } from 'date-fns'
 import { parseDate, fmt, fmtInput, calcFinish } from '@/lib/dates'
 import { GanttChart, GanttLegend } from '@/components/GanttChart'
-import { SCALE_CONFIG, NAME_COL_DEFAULT, NAME_COL_MAX, NAME_COL_MIN, NAME_COL_STORAGE, COLOR_MAP } from '@/lib/gantt/constants'
+import { SCALE_CONFIG, NAME_COL_DEFAULT, NAME_COL_MAX, NAME_COL_MIN, NAME_COL_STORAGE } from '@/lib/gantt/constants'
+import { getAutoColor, COLOR_HEX, type TaskColor } from '@/lib/task-color'
 import { buildRenderOrder, computeDisplayNumbers, getDragBlock, reorderTaskList, sortTasks } from '@/lib/gantt/utils'
 import type { GanttTask } from '@/lib/gantt/types'
 
@@ -404,6 +405,7 @@ function TaskDrawer({ task, tasks, displayNumber, saturdayWork, onClose, onSave,
       : Math.max(1, task.durationDays),
   )
   const [manualFinish, setManualFinish] = useState(() => parseDate(task.finishDate))
+  const [manualColor, setManualColor] = useState(() => task.color !== getAutoColor(task.name))
 
   const isManual = meta.relationshipType === 'Manual'
   const isMilestone = meta.relationshipType === 'Milestone' || meta.isMilestone
@@ -415,6 +417,20 @@ function TaskDrawer({ task, tasks, displayNumber, saturdayWork, onClose, onSave,
       : calcFinish(startDate, duration, saturdayWork)
 
   const setMetaField = (k: string, v: unknown) => setMeta(m => ({ ...m, [k]: v }))
+
+  const handleNameChange = (name: string) => {
+    setMeta(f => ({
+      ...f,
+      name,
+      color: manualColor ? f.color : getAutoColor(name),
+    }))
+  }
+
+  const handleColorPick = (color: TaskColor) => {
+    setManualColor(true)
+    setMeta(f => ({ ...f, color }))
+  }
+
   const parentOptions = tasks.filter(t => t.id !== task.id && !t.parentTaskId)
 
   const onDurationChange = (val: string) => {
@@ -463,7 +479,7 @@ function TaskDrawer({ task, tasks, displayNumber, saturdayWork, onClose, onSave,
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         <div>
           <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Task Name</label>
-          <input value={meta.name} onChange={e => setMetaField('name', e.target.value)}
+          <input value={meta.name} onChange={e => handleNameChange(e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
         </div>
         <div className="grid grid-cols-2 gap-3">
@@ -526,8 +542,8 @@ function TaskDrawer({ task, tasks, displayNumber, saturdayWork, onClose, onSave,
         <div>
           <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Color</label>
           <div className="flex gap-2">
-            {Object.entries({ blue:'#2458ff', red:'#d71920', green:'#138a36', teal:'#168c9a', purple:'#7a3cff', black:'#111' }).map(([k,v]) => (
-              <button key={k} onClick={() => setMetaField('color', k)}
+            {Object.entries(COLOR_HEX).map(([k, v]) => (
+              <button key={k} type="button" onClick={() => handleColorPick(k as TaskColor)}
                 className={`w-7 h-7 rounded-full transition-all ${meta.color===k ? 'ring-2 ring-offset-2 ring-gray-400 scale-110' : ''}`}
                 style={{background:v}} />
             ))}
@@ -589,13 +605,24 @@ function AddTaskModal({ revisionId, tasks, onClose, onAdded }: {
   const [predecessorTaskId, setPredecessorTaskId] = useState('')
   const [relationshipType, setRelationshipType] = useState('FS')
   const [lagDays, setLagDays] = useState(0)
-  const [color, setColor] = useState('blue')
+  const [color, setColor] = useState<TaskColor>('blue')
+  const [manualColor, setManualColor] = useState(false)
   const [responsibleParty, setResponsibleParty] = useState('')
   const [parentTaskId, setParentTaskId] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
   const parentOptions = tasks.filter(t => !t.parentTaskId)
+
+  const handleNameChange = (nextName: string) => {
+    setName(nextName)
+    if (!manualColor) setColor(getAutoColor(nextName))
+  }
+
+  const handleColorPick = (nextColor: TaskColor) => {
+    setManualColor(true)
+    setColor(nextColor)
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -641,7 +668,7 @@ function AddTaskModal({ revisionId, tasks, onClose, onAdded }: {
         <form onSubmit={submit} className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Task Name *</label>
-            <input value={name} onChange={e => setName(e.target.value)} required
+            <input value={name} onChange={e => handleNameChange(e.target.value)} required
               className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm" placeholder="Install fixtures" />
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -691,8 +718,8 @@ function AddTaskModal({ revisionId, tasks, onClose, onAdded }: {
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Color</label>
             <div className="flex gap-2">
-              {Object.entries(COLOR_MAP).map(([k, v]) => (
-                <button key={k} type="button" onClick={() => setColor(k)}
+              {Object.entries(COLOR_HEX).map(([k, v]) => (
+                <button key={k} type="button" onClick={() => handleColorPick(k as TaskColor)}
                   className={`w-7 h-7 rounded-full transition-all ${color === k ? 'ring-2 ring-offset-2 ring-gray-400 scale-110' : ''}`}
                   style={{ background: v }} />
               ))}

@@ -2,8 +2,9 @@
 
 import { format, addDays, differenceInCalendarDays, startOfWeek } from 'date-fns'
 import { parseDate, fmt } from '@/lib/dates'
+import { COLOR_HEX, type TaskColor } from '@/lib/task-color'
 import {
-  COLOR_MAP, DRAG_COL, LEFT_FIXED_COLS, NAME_COL_DEFAULT, ROW_H, SCALE_CONFIG,
+  DRAG_COL, LEFT_FIXED_COLS, NAME_COL_DEFAULT, ROW_H, SCALE_CONFIG,
 } from '@/lib/gantt/constants'
 import {
   buildRenderOrder, computeDisplayNumbers, elbowPath, getBarDates, getTaskBarGeometry,
@@ -168,7 +169,8 @@ export function GanttChart({
             const dur = Math.max(1, differenceInCalendarDays(barDates.finish, barDates.start) + 1)
             const isMil = task.isMilestone || task.relationshipType === 'Milestone'
             const barW = isMil ? 10 : dur * COL_PX - 4
-            const barColor = COLOR_MAP[task.color] || '#2458ff'
+            const barColor = COLOR_HEX[task.color as TaskColor] ?? COLOR_HEX.blue
+            const nameColor = isPhase ? '#ffffff' : barColor
             const indentPx = taskNestingDepth(task, tasks) * 22
             const displayNum = displayNumbers.get(task.id) || '—'
             const isDragging = dragBlockIds.includes(task.id)
@@ -221,7 +223,7 @@ export function GanttChart({
                       style={{ paddingLeft: isChild ? indentPx + 8 : indentPx }}
                     >
                       {isMil && <span className="shrink-0" style={{ color: barColor }}>◆</span>}
-                      <span className="task-name truncate flex-1">{task.name}</span>
+                      <span className="task-name truncate flex-1" style={{ color: nameColor }}>{task.name}</span>
                       {!printMode && (
                         <span className="shrink-0 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity no-print">
                           <button
