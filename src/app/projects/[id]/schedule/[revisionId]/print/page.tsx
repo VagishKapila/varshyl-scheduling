@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { format, addDays, startOfWeek, startOfDay } from 'date-fns'
+import { format, addDays, startOfWeek, startOfDay, differenceInCalendarDays } from 'date-fns'
 import { parseDate, fmt } from '@/lib/dates'
 
 const COLOR_MAP: Record<string, string> = {
@@ -23,93 +23,85 @@ const ROW_H = 36
 const HEADER_ROW_H = ROW_H
 const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000
 
-interface BarPosition {
-  taskId: string
-  rowIndex: number
-  startCol: number
-  endCol: number
-  leftX: number
-  rightX: number
-  predecessorTaskId: string | null
-  relationshipType: string
+// Screen Gantt scale — print X coords are scaled by CHART_COL_W / colPx
+const SCREEN_SCALE_CONFIG: Record<string, { colPx: number }> = {
+  daily: { colPx: 28 },
+  weekly: { colPx: 10 },
+  '2-week': { colPx: 6 },
+  monthly: { colPx: 3 },
+  quarterly: { colPx: 2 },
+  yearly: { colPx: 1 },
 }
 
-type FsConnection = {
-  x1: number
-  y1: number
-  x2: number
-  y2: number
-  path: string
-  predName: string
-  succName: string
+type DepLine = { key: string; path: string; arrow: string }
+
+function dayOffsetFrom(date: Date | string, ganttStart: Date) {
+  return differenceInCalendarDays(parseDate(date), ganttStart)
 }
 
-function getBarBounds(start: Date, finish: Date, chartStart: Date) {
-  const startCol = Math.max(0, Math.floor((start.getTime() - chartStart.getTime()) / MS_PER_WEEK))
-  const endWeek = Math.ceil((finish.getTime() - chartStart.getTime()) / MS_PER_WEEK)
-  const widthWeeks = Math.max(1, endWeek - startCol)
-  const leftX = startCol * CHART_COL_W + 2
-  const rightX = leftX + widthWeeks * CHART_COL_W - 4
-  return { startCol, endCol: startCol + widthWeeks, leftX, rightX }
+function getTaskBarGeometry(
+  task: TaskRow, rowIndex: number, tasks: TaskRow[], colPx: number, ganttStart: Date,
+) {
+  const barDates = getBarDates(task, tasks)
+  const startOff = dayOffsetFrom(barDates.start, ganttStart) * colPx
+  const dur = Math.max(1, differenceInCalendarDays(barDates.finish, barDates.start) + 1)
+  const barW = task.isMilestone || task.relationshipType === 'Milestone' ? 10 : dur * colPx - 4
+  const y = rowIndex * ROW_H + ROW_H / 2
+  const left = startOff + 2
+  const right = startOff + 2 + Math.max(barW, 4)
+  const isMil = task.isMilestone || task.relationshipType === 'Milestone'
+  return { y, left, right, isMilestone: isMil }
 }
 
-function barCenterY(rowIndex: number): number {
-  return rowIndex * ROW_H + ROW_H / 2
+function elbowPath(x1: number, y1: number, x2: number, y2: number): string {
+  const midX = x1 + Math.sign(x2 - x1) * Math.max(12, Math.abs(x2 - x1) / 2)
+  return `M ${x1} ${y1} H ${midX} V ${y2} H ${x2}`
 }
 
-function buildBarPositions(tasks: TaskRow[], chartStart: Date): BarPosition[] {
-  return tasks.map((task, rowIndex) => {
-    const barDates = getBarDates(task, tasks)
-    const { startCol, endCol, leftX, rightX } = getBarBounds(barDates.start, barDates.finish, chartStart)
-    return {
-      taskId: task.id,
-      rowIndex,
-      startCol,
-      endCol,
-      leftX,
-      rightX,
-      predecessorTaskId: task.predecessorTaskId,
-      relationshipType: task.relationshipType,
-    }
-  })
-}
+function buildDependencyLines(tasks: TaskRow[], screenColPx: number, ganttStart: Date): DepLine[] {
+  const xScale = CHART_COL_W / screenColPx
+  const rowIndexById = new Map(tasks.map((t, i) => [t.id, i]))
+  const lines: DepLine[] = []
 
-function buildFsConnections(barPositions: BarPosition[], tasks: TaskRow[]): FsConnection[] {
-  const barPosMap: Record<string, BarPosition> = {}
-  const taskMap = new Map(tasks.map(t => [t.id, t]))
-  barPositions.forEach(bp => { barPosMap[bp.taskId] = bp })
+  for (const task of tasks) {
+    if (!task.predecessorTaskId || task.relationshipType === 'Manual') continue
+    const predIdx = rowIndexById.get(task.predecessorTaskId)
+    const succIdx = rowIndexById.get(task.id)
+    if (predIdx === undefined || succIdx === undefined) continue
 
-  const connections = barPositions
-    .filter(bp =>
-      bp.predecessorTaskId &&
-      bp.relationshipType === 'FS' &&
-      barPosMap[bp.predecessorTaskId],
-    )
-    .map(bp => {
-      const pred = barPosMap[bp.predecessorTaskId!]
-      const x1 = pred.rightX
-      const y1 = barCenterY(pred.rowIndex)
-      const x2 = bp.leftX
-      const y2 = barCenterY(bp.rowIndex)
-      const jog = x1 + 10
-      const path = `M ${x1} ${y1} H ${jog} V ${y2} H ${x2}`
-      return {
-        x1,
-        y1,
-        x2,
-        y2,
-        path,
-        predName: taskMap.get(pred.taskId)?.name ?? pred.taskId,
-        succName: taskMap.get(bp.taskId)?.name ?? bp.taskId,
-      }
-    })
-    .filter(c => c.x1 > 0 && c.x2 > c.x1 && c.y2 > c.y1)
+    const pred = tasks[predIdx]
+    const predGeo = getTaskBarGeometry(pred, predIdx, tasks, screenColPx, ganttStart)
+    const succGeo = getTaskBarGeometry(task, succIdx, tasks, screenColPx, ganttStart)
+    const rel = task.relationshipType || 'FS'
 
-  connections.slice(0, 3).forEach(c => {
-    console.log('[print FS connector]', c.predName, c.x1, c.y1, c.succName, c.x2, c.y2, c.path)
+    let x1: number, x2: number
+    if (rel === 'SS') { x1 = predGeo.left; x2 = succGeo.left }
+    else if (rel === 'FF') { x1 = predGeo.right; x2 = succGeo.right }
+    else if (rel === 'SF') { x1 = predGeo.left; x2 = succGeo.right }
+    else { x1 = predGeo.right; x2 = succGeo.left }
+
+    x1 *= xScale
+    x2 *= xScale
+    const y1 = predGeo.y
+    const y2 = succGeo.y
+    const d = elbowPath(x1, y1, x2, y2)
+    const pointingRight = x2 >= x1
+    const ax = x2
+    const ay = y2
+    const arrow = pointingRight
+      ? `${ax},${ay} ${ax - 5},${ay - 3} ${ax - 5},${ay + 3}`
+      : `${ax},${ay} ${ax + 5},${ay - 3} ${ax + 5},${ay + 3}`
+
+    lines.push({ key: `dep-${task.id}`, path: d, arrow })
+  }
+
+  lines.slice(0, 3).forEach((line, i) => {
+    const task = tasks.find(t => line.key === `dep-${t.id}`)
+    const pred = task?.predecessorTaskId ? tasks.find(t => t.id === task.predecessorTaskId) : null
+    console.log('[print FS connector]', i, pred?.name, task?.name, line.path)
   })
 
-  return connections
+  return lines
 }
 
 type LookAheadEntry = {
@@ -193,6 +185,13 @@ function getDisplayDuration(task: TaskRow, tasks: TaskRow[], saturdayWork = fals
     current.setDate(current.getDate() + 1)
   }
   return Math.max(1, days)
+}
+
+function getBarBounds(start: Date, finish: Date, chartStart: Date) {
+  const startCol = Math.max(0, Math.floor((start.getTime() - chartStart.getTime()) / MS_PER_WEEK))
+  const endWeek = Math.ceil((finish.getTime() - chartStart.getTime()) / MS_PER_WEEK)
+  const widthWeeks = Math.max(1, endWeek - startCol)
+  return { startCol, endCol: startCol + widthWeeks }
 }
 
 function getTaskColumns(
@@ -345,15 +344,23 @@ export default function PrintPage() {
     const parentIds = new Set(tasks.filter(t => t.parentTaskId).map(t => t.parentTaskId!))
     const { weeks, chartStart } = buildWeekColumns(tasks)
     const totalWeeks = weeks.length
-    const barPositions = buildBarPositions(tasks, chartStart)
-    const fsConnections = buildFsConnections(barPositions, tasks)
-    return { tasks, parentIds, weeks, chartStart, totalWeeks, fsConnections, today: startOfDay(new Date()) }
-  }, [revision])
+
+    const scaleKey = searchParams.get('scale') ?? 'weekly'
+    const screenColPx = SCREEN_SCALE_CONFIG[scaleKey]?.colPx ?? 10
+    const todayDate = new Date()
+    const minDate = tasks.length
+      ? new Date(Math.min(...tasks.map(t => parseDate(t.startDate).getTime())))
+      : todayDate
+    const ganttStart = startOfWeek(addDays(minDate, -7))
+    const dependencyLines = buildDependencyLines(tasks, screenColPx, ganttStart)
+
+    return { tasks, parentIds, weeks, chartStart, totalWeeks, dependencyLines, today: startOfDay(new Date()) }
+  }, [revision, searchParams])
 
   if (loading) return <div className="p-8 text-gray-400">Loading…</div>
   if (notFound || !revision || !scheduleData) return <div className="p-8 text-red-500">Revision not found</div>
 
-  const { tasks, parentIds, weeks, chartStart, totalWeeks, fsConnections, today } = scheduleData
+  const { tasks, parentIds, weeks, chartStart, totalWeeks, dependencyLines, today } = scheduleData
   const project = revision.project
   const company = project?.company
   const twoWeekCutoff = startOfDay(addDays(today, 14))
@@ -576,22 +583,10 @@ export default function PrintPage() {
               } as React.CSSProperties}
               aria-hidden
             >
-              <defs>
-                <marker id="fs-arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
-                  <path d="M0,0 L8,4 L0,8 Z" fill="#64748b" />
-                </marker>
-              </defs>
-              {fsConnections.map((c, i) => (
-                <g key={i}>
-                  <path
-                    d={c.path}
-                    stroke="#64748b"
-                    strokeWidth={1.5}
-                    fill="none"
-                    markerEnd="url(#fs-arrow)"
-                  />
-                  <circle cx={c.x1} cy={c.y1} r={2.5} fill="#94a3b8" />
-                  <circle cx={c.x2} cy={c.y2} r={2.5} fill="#94a3b8" />
+              {dependencyLines.map(line => (
+                <g key={line.key}>
+                  <path d={line.path} fill="none" stroke="#94a3b8" strokeWidth={1.5} />
+                  <polygon points={line.arrow} fill="#94a3b8" />
                 </g>
               ))}
             </svg>
