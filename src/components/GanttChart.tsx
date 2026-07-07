@@ -12,6 +12,47 @@ import {
 } from '@/lib/gantt/utils'
 import type { GanttTask } from '@/lib/gantt/types'
 
+const HEADER_H_SINGLE = 40
+const HEADER_H_WEEKLY = 48
+const PHASE_BAR_H = 14
+const CHILD_BAR_H = 10
+const BAR_RADIUS = 3
+
+function rowBackground(rowIndex: number) {
+  return rowIndex % 2 === 0 ? '#ffffff' : '#f8fafc'
+}
+
+function barTop(height: number) {
+  return (ROW_H - height) / 2
+}
+
+function buildMonthSpans(
+  ticks: Date[],
+  colPx: number,
+  stepDays: number,
+  dayOffset: (date: Date | string) => number,
+) {
+  const spans: Array<{ key: string; label: string; left: number; width: number; bg: string }> = []
+  let i = 0
+  let bgIdx = 0
+  while (i < ticks.length) {
+    const m = ticks[i].getMonth()
+    const y = ticks[i].getFullYear()
+    let j = i + 1
+    while (j < ticks.length && ticks[j].getMonth() === m && ticks[j].getFullYear() === y) j++
+    spans.push({
+      key: `${y}-${m}-${i}`,
+      label: format(ticks[i], 'MMMM yyyy').toUpperCase(),
+      left: dayOffset(ticks[i]) * colPx,
+      width: (j - i) * stepDays * colPx,
+      bg: bgIdx % 2 === 0 ? '#e2e8f0' : '#f1f5f9',
+    })
+    bgIdx++
+    i = j
+  }
+  return spans
+}
+
 export type GanttChartProps = {
   tasks: GanttTask[]
   scale: string
@@ -73,6 +114,12 @@ export function GanttChart({
     tickCur = addDays(tickCur, scaleConfig.stepDays)
   }
 
+  const isWeeklyHeader = scale === 'weekly'
+  const headerHeight = isWeeklyHeader ? HEADER_H_WEEKLY : HEADER_H_SINGLE
+  const monthSpans = isWeeklyHeader
+    ? buildMonthSpans(ticks, COL_PX, scaleConfig.stepDays, dayOffset)
+    : []
+
   const rowIndexById = new Map(renderedTasks.map((t, i) => [t.id, i]))
   const parentIds = new Set(tasks.filter(t => t.parentTaskId).map(t => t.parentTaskId!))
   const ganttWidth = totalDays * COL_PX
@@ -112,8 +159,14 @@ export function GanttChart({
   return (
     <div className={printMode ? 'overflow-visible' : 'flex-1 overflow-auto'}>
       <div style={{ minWidth: leftPanelWidth + totalDays * COL_PX }}>
-        <div className={`flex ${printMode ? '' : 'sticky top-0 z-10'} bg-gray-50 border-b border-gray-200`} style={{ height: 40 }}>
-          <div className="flex-shrink-0 border-r border-gray-200 relative" style={{ width: leftPanelWidth }}>
+        <div
+          className={`flex ${printMode ? '' : 'sticky top-0 z-10'} border-b border-gray-200`}
+          style={{ height: headerHeight }}
+        >
+          <div
+            className="flex-shrink-0 border-r border-gray-200 relative bg-gray-50"
+            style={{ width: leftPanelWidth }}
+          >
             <div
               className="grid text-xs font-semibold text-gray-500 uppercase tracking-wide px-3 h-full items-center"
               style={{ gridTemplateColumns: `${DRAG_COL}px 28px ${nameColWidth}px 48px 76px 76px 72px` }}
@@ -134,16 +187,56 @@ export function GanttChart({
               <span>Days</span><span>Start</span><span>Finish</span><span>Party</span>
             </div>
           </div>
-          <div className="relative flex-1" style={{ height: 40 }}>
-            {ticks.map((tick, i) => (
-              <div
-                key={`${scale}-${i}`}
-                className="absolute text-xs text-gray-400 font-medium whitespace-nowrap"
-                style={{ left: dayOffset(tick) * COL_PX + 2, top: 12 }}
-              >
-                {scaleConfig.formatLabel(tick)}
-              </div>
-            ))}
+          <div className="relative flex-1 bg-gray-50" style={{ height: headerHeight }}>
+            {isWeeklyHeader ? (
+              <>
+                <div className="relative" style={{ height: 22 }}>
+                  {monthSpans.map(span => (
+                    <div
+                      key={span.key}
+                      className="absolute top-0 bottom-0 flex items-center px-1 border-r border-slate-300"
+                      style={{
+                        left: span.left,
+                        width: span.width,
+                        background: span.bg,
+                        fontSize: 9,
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        color: '#334155',
+                      }}
+                    >
+                      {span.label}
+                    </div>
+                  ))}
+                </div>
+                <div className="relative border-t border-gray-200" style={{ height: 26 }}>
+                  {ticks.map((tick, i) => (
+                    <div
+                      key={`week-day-${i}`}
+                      className="absolute font-medium"
+                      style={{
+                        left: dayOffset(tick) * COL_PX + 2,
+                        top: 6,
+                        fontSize: 9,
+                        color: '#64748b',
+                      }}
+                    >
+                      {format(tick, 'd')}
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              ticks.map((tick, i) => (
+                <div
+                  key={`${scale}-${i}`}
+                  className="absolute text-xs text-gray-400 font-medium whitespace-nowrap"
+                  style={{ left: dayOffset(tick) * COL_PX + 2, top: 12 }}
+                >
+                  {scaleConfig.formatLabel(tick)}
+                </div>
+              ))
+            )}
             {!printMode && (
               <div
                 className="absolute top-0 bottom-0 w-0.5 z-10"
@@ -177,19 +270,26 @@ export function GanttChart({
             const displayNum = displayNumbers.get(task.id) || '—'
             const isDragging = dragBlockIds.includes(task.id)
             const isDragOver = dragOverId === task.id
+            const altBg = rowBackground(rowIndex)
+            const nextTask = renderedTasks[rowIndex + 1]
+            const nextIsPhase = Boolean(
+              nextTask && !nextTask.parentTaskId && parentIds.has(nextTask.id),
+            )
+            const phaseSeparator = nextIsPhase
+            const summaryBar = isPhase || isParent
 
             return (
               <div
                 key={task.id}
-                className={`group gantt-row flex border-b border-gray-100 ${
+                className={`group gantt-row flex ${
                   printMode ? '' : 'cursor-pointer'
-                } ${
-                  isPhase ? 'gantt-row-phase font-bold' :
-                  isParent ? 'bg-blue-50 font-semibold text-blue-900 hover:bg-blue-100' :
-                  isChild ? 'bg-white text-gray-700 hover:bg-blue-50/30' :
-                  'hover:bg-blue-50/30'
-                } ${task.isCritical ? 'ring-inset ring-1 ring-red-200' : ''} ${isDragging ? 'opacity-50' : ''} ${isDragOver ? 'bg-orange-50' : ''}`}
-                style={{ height: ROW_H }}
+                } ${isPhase ? 'gantt-row-phase font-bold' : ''} ${
+                  task.isCritical ? 'ring-inset ring-1 ring-red-200' : ''
+                } ${isDragging ? 'opacity-50' : ''} ${isDragOver ? 'bg-orange-50' : ''}`}
+                style={{
+                  height: ROW_H,
+                  borderBottom: phaseSeparator ? '2px solid #cbd5e1' : '1px solid #f1f5f9',
+                }}
                 onDragOver={printMode ? undefined : e => { e.preventDefault(); onDragOver?.(task.id) }}
                 onDragLeave={printMode ? undefined : () => onDragLeave?.(task.id)}
                 onDrop={printMode ? undefined : e => { e.preventDefault(); e.stopPropagation(); onDrop?.(task.id) }}
@@ -199,7 +299,10 @@ export function GanttChart({
                   className={`flex-shrink-0 border-r border-gray-200 flex items-center px-2 gantt-left-panel ${
                     isPhase ? 'bg-gray-900 text-white hover:bg-gray-800' : ''
                   }`}
-                  style={{ width: leftPanelWidth }}
+                  style={{
+                    width: leftPanelWidth,
+                    background: isPhase ? undefined : altBg,
+                  }}
                 >
                   <div
                     className="grid items-center gap-1 w-full text-xs"
@@ -249,8 +352,8 @@ export function GanttChart({
                 </div>
 
                 <div
-                  className={`relative flex-shrink-0 ${isPhase ? 'bg-white' : ''}`}
-                  style={{ height: ROW_H, width: ganttWidth, zIndex: 2 }}
+                  className="relative flex-shrink-0"
+                  style={{ height: ROW_H, width: ganttWidth, zIndex: 2, background: altBg }}
                 >
                   {ticks.map((tick, wi) => (
                     <div
@@ -273,31 +376,17 @@ export function GanttChart({
                       background: barColor,
                       transform: 'rotate(45deg)',
                     }} />
-                  ) : isPhase ? (
+                  ) : summaryBar ? (
                     <div
-                      className="absolute rounded flex items-center overflow-hidden gantt-bar"
+                      className="absolute flex items-center overflow-hidden gantt-bar"
                       style={{
                         left: startOff + 2,
-                        top: 10,
+                        top: barTop(PHASE_BAR_H),
                         width: Math.max(barW, 4),
-                        height: 12,
-                        background: '#111',
-                      }}
-                    >
-                      {barW >= 60 && (
-                        <span className="px-1 text-[10px] font-semibold text-white truncate block w-full" style={{ textOverflow: 'ellipsis', overflow: 'hidden' }}>{task.name}</span>
-                      )}
-                    </div>
-                  ) : isParent ? (
-                    <div
-                      className="absolute rounded flex items-center overflow-hidden gantt-bar"
-                      style={{
-                        left: startOff + 2,
-                        top: 11,
-                        width: Math.max(barW, 4),
-                        height: 10,
-                        background: '#2458ff',
-                        opacity: 0.9,
+                        height: PHASE_BAR_H,
+                        borderRadius: BAR_RADIUS,
+                        background: isPhase ? '#111' : '#2458ff',
+                        opacity: isPhase ? 1 : 0.9,
                       }}
                     >
                       {barW >= 60 && (
@@ -306,12 +395,13 @@ export function GanttChart({
                     </div>
                   ) : (
                     <div
-                      className="absolute rounded flex items-center overflow-hidden gantt-bar"
+                      className="absolute flex items-center overflow-hidden gantt-bar"
                       style={{
                         left: startOff + 2,
-                        top: 12,
+                        top: barTop(CHILD_BAR_H),
                         width: Math.max(barW, 4),
-                        height: 8,
+                        height: CHILD_BAR_H,
+                        borderRadius: BAR_RADIUS,
                         background: barColor,
                         opacity: task.isCritical ? 1 : 0.85,
                       }}
@@ -326,9 +416,19 @@ export function GanttChart({
             )
           })}
 
-          {!printMode && Array.from({ length: 5 }).map((_, i) => (
-            <div key={`empty-${i}`} className="gantt-row gantt-row-empty flex border-b border-gray-100" style={{ height: ROW_H }}>
-              <div className="flex-shrink-0 border-r border-gray-200 flex items-center px-2" style={{ width: leftPanelWidth }}>
+          {!printMode && Array.from({ length: 5 }).map((_, i) => {
+            const rowIndex = renderedTasks.length + i
+            const altBg = rowBackground(rowIndex)
+            return (
+            <div
+              key={`empty-${i}`}
+              className="gantt-row gantt-row-empty flex"
+              style={{ height: ROW_H, borderBottom: '1px solid #f1f5f9', background: altBg }}
+            >
+              <div
+                className="flex-shrink-0 border-r border-gray-200 flex items-center px-2"
+                style={{ width: leftPanelWidth, background: altBg }}
+              >
                 <div
                   className="grid items-center gap-1 w-full text-xs text-gray-300"
                   style={{ gridTemplateColumns: `${DRAG_COL - 4}px 24px ${nameColWidth}px 44px 76px 76px 72px` }}
@@ -338,9 +438,10 @@ export function GanttChart({
                   <span /><span /><span /><span />
                 </div>
               </div>
-              <div className="flex-1" />
+              <div className="flex-1" style={{ background: altBg }} />
             </div>
-          ))}
+            )
+          })}
         </div>
       </div>
     </div>
