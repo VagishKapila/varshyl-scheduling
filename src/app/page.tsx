@@ -141,7 +141,11 @@ export default function DashboardPage() {
                     </Link>
                     <button onClick={() => duplicateProject(p)}
                       className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50">Duplicate</button>
-                    <Link href={rev?.id ? `/projects/${p.id}/schedule/${rev.id}/print` : '#'}>
+                    <Link
+                      href={rev?.id ? `/projects/${p.id}/schedule/${rev.id}/print?scale=weekly&lookahead=false` : '#'}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
                       <button className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50">PDF</button>
                     </Link>
                     <button onClick={() => archiveProject(p.id)}

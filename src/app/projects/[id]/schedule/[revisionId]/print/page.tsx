@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
-import Link from 'next/link'
 import { format } from 'date-fns'
 import { GanttChart, GanttLegend } from '@/components/GanttChart'
 import { sortTasks } from '@/lib/gantt/utils'
@@ -89,11 +88,6 @@ export default function PrintPage() {
     resolveAndLoad()
   }, [revisionId, projectId, router, loadData, searchParams])
 
-  function handleSavePdf() {
-    const qs = searchParams.toString()
-    window.location.href = `/api/projects/${projectId}/schedule/${revisionId}/pdf${qs ? `?${qs}` : ''}`
-  }
-
   if (loading) return <div className="p-8 text-gray-400">Loading…</div>
   if (notFound || !revision) return <div className="p-8 text-red-500">Revision not found</div>
 
@@ -102,14 +96,22 @@ export default function PrintPage() {
 
   return (
     <div className="print-container print-page" style={{ fontFamily: 'Arial, sans-serif', fontSize: 9, color: '#111', background: 'white', padding: 16 }}>
-      <div className="print-toolbar no-print mb-4 flex gap-3 items-center p-3 bg-gray-50 rounded-lg border border-gray-200">
-        <Link href={`/projects/${projectId}/schedule/${revisionId}`} className="text-sm text-gray-600 hover:underline">← Back to Gantt</Link>
-        <div className="ml-auto flex gap-2">
-          <button onClick={() => window.print()} className="px-4 py-2 rounded-lg text-white text-sm font-bold" style={{ background: '#111' }}>
+      <div className="print:hidden no-print flex items-center gap-4 p-4 border-b">
+        <a
+          href={`/projects/${projectId}/schedule/${revisionId}`}
+          className="text-sm text-gray-600 hover:text-gray-900"
+        >
+          ← Back to Gantt
+        </a>
+        <div className="ml-auto flex items-center gap-3">
+          <span className="text-xs text-gray-400">
+            To save as PDF: Print → Destination → Save as PDF
+          </span>
+          <button
+            onClick={() => window.print()}
+            className="bg-gray-900 text-white px-4 py-2 rounded text-sm font-medium hover:bg-gray-700"
+          >
             Print PDF
-          </button>
-          <button onClick={handleSavePdf} className="px-4 py-2 rounded-lg border border-gray-300 text-sm font-semibold hover:bg-gray-50">
-            Save as PDF
           </button>
         </div>
       </div>
