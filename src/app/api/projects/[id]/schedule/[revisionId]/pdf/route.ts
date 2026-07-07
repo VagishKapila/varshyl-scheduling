@@ -49,10 +49,7 @@ export async function GET(
   }
 
   const baseUrl = process.env.NEXTAUTH_URL ?? 'http://localhost:3000'
-  const scale = req.nextUrl.searchParams.get('scale') ?? 'weekly'
-  const lookahead = req.nextUrl.searchParams.get('lookahead') ?? 'false'
-  const schedule = req.nextUrl.searchParams.get('schedule') ?? 'true'
-  const printUrl = `${baseUrl}/projects/${id}/schedule/${revisionId}/print?scale=${encodeURIComponent(scale)}&lookahead=${encodeURIComponent(lookahead)}&schedule=${encodeURIComponent(schedule)}`
+  const printUrl = `${baseUrl}/projects/${id}/schedule/${revisionId}?pdfmode=true`
 
   let puppeteer: typeof import('puppeteer')
   try {
@@ -89,13 +86,15 @@ export async function GET(
     }
 
     await page.goto(printUrl, { waitUntil: 'networkidle0', timeout: 30_000 })
-    await page.waitForSelector('.print-gantt-bar', { timeout: 10_000 })
+    await page.waitForSelector('.gantt-bar', { timeout: 10_000 })
+
+    await page.setViewport({ width: 1600, height: 900 })
 
     const pdf = await page.pdf({
       format: 'A3',
       landscape: true,
       printBackground: true,
-      margin: { top: '0.5in', right: '0.5in', bottom: '0.5in', left: '0.5in' },
+      margin: { top: '0.3in', right: '0.2in', bottom: '0.3in', left: '0.2in' },
     })
 
     const safeName = (revision.project?.name ?? 'schedule')

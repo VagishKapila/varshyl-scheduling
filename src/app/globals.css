@@ -83,6 +83,17 @@
   }
 }
 
+body.pdfmode .print-toolbar,
+body.pdfmode .gantt-toolbar,
+body.pdfmode header,
+body.pdfmode nav,
+body.pdfmode .sidebar {
+  display: none !important;
+}
+body.pdfmode {
+  background: white;
+}
+
 .gantt-row-phase:hover {
   background-color: #2d2d2d;
   color: white;

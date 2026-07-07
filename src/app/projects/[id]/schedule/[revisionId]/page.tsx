@@ -251,6 +251,12 @@ export default function GanttPage() {
     }
   }, [])
 
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('pdfmode') === 'true') {
+      document.body.classList.add('pdfmode')
+    }
+  }, [])
+
   function persistNameColWidth(w: number) {
     const clamped = Math.min(NAME_COL_MAX, Math.max(NAME_COL_MIN, w))
     setNameColWidth(clamped)
@@ -677,7 +683,7 @@ export default function GanttPage() {
                       transform: 'rotate(45deg)',
                     }} />
                   ) : isPhase ? (
-                    <div className="absolute rounded flex items-center overflow-hidden"
+                    <div className="absolute rounded flex items-center overflow-hidden gantt-bar"
                       style={{
                         left: startOff + 2,
                         top: 10,
@@ -690,7 +696,7 @@ export default function GanttPage() {
                       )}
                     </div>
                   ) : isParent ? (
-                    <div className="absolute rounded flex items-center overflow-hidden"
+                    <div className="absolute rounded flex items-center overflow-hidden gantt-bar"
                       style={{
                         left: startOff + 2,
                         top: 11,
@@ -704,7 +710,7 @@ export default function GanttPage() {
                       )}
                     </div>
                   ) : (
-                    <div className="absolute rounded flex items-center overflow-hidden"
+                    <div className="absolute rounded flex items-center overflow-hidden gantt-bar"
                       style={{
                         left: startOff + 2,
                         top: 12,
