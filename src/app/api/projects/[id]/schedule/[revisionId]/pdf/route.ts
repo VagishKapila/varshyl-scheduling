@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { existsSync } from 'fs'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
@@ -24,6 +25,15 @@ function parseRequestCookies(cookieHeader: string, baseUrl: string) {
       return { name, value, url: url.origin }
     })
     .filter((c): c is { name: string; value: string; url: string } => c !== null)
+}
+
+async function resolveExecutablePath(): Promise<string> {
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    return process.env.PUPPETEER_EXECUTABLE_PATH
+  }
+  if (existsSync('/usr/bin/chromium')) return '/usr/bin/chromium'
+  if (existsSync('/usr/bin/chromium-browser')) return '/usr/bin/chromium-browser'
+  return chromium.executablePath()
 }
 
 export async function GET(
@@ -57,8 +67,14 @@ export async function GET(
     chromium.setGraphicsMode = false
 
     const browser = await puppeteer.launch({
-      args: chromium.args,
-      executablePath: await chromium.executablePath(),
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--single-process',
+      ],
+      executablePath: await resolveExecutablePath(),
       headless: true,
     })
 
