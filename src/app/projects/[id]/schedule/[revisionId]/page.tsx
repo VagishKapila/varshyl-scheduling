@@ -615,7 +615,7 @@ export default function GanttPage() {
             return (
               <div key={task.id}
                 className={`group gantt-row flex border-b border-gray-100 cursor-pointer ${
-                  isPhase ? 'gantt-row-phase bg-gray-900 text-white font-bold hover:bg-gray-800' :
+                  isPhase ? 'gantt-row-phase font-bold' :
                   isParent ? 'bg-blue-50 font-semibold text-blue-900 hover:bg-blue-100' :
                   isChild ? 'bg-white text-gray-700 hover:bg-blue-50/30' :
                   'hover:bg-blue-50/30'
@@ -626,7 +626,9 @@ export default function GanttPage() {
                 onDrop={e => { e.preventDefault(); e.stopPropagation(); handleDrop(task.id) }}
                 onClick={() => openTaskDrawer(task.id)}>
                 {/* Left table */}
-                <div className="flex-shrink-0 border-r border-gray-200 flex items-center px-2"
+                <div className={`flex-shrink-0 border-r border-gray-200 flex items-center px-2 ${
+                  isPhase ? 'bg-gray-900 text-white hover:bg-gray-800' : ''
+                }`}
                   style={{width: leftPanelWidth}}>
                   <div className="grid items-center gap-1 w-full text-xs"
                     style={{gridTemplateColumns:`${DRAG_COL - 4}px 24px ${nameColWidth}px 44px 76px 76px 72px`}}>
@@ -668,7 +670,7 @@ export default function GanttPage() {
                 </div>
 
                 {/* Gantt bar */}
-                <div className="relative flex-1" style={{height: ROW_H, zIndex: 2 }}>
+                <div className="relative flex-1 bg-white" style={{height: ROW_H, zIndex: 2 }}>
                   {ticks.map((tick, wi) => (
                     <div key={`grid-${scale}-${wi}`} className="absolute top-0 bottom-0 w-px bg-gray-100"
                       style={{left: dayOffset(tick) * COL_PX}} />
