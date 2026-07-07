@@ -332,10 +332,8 @@ export default function PrintPage() {
   }
 
   function handleSavePdf() {
-    if (revision?.project?.name) {
-      document.title = `${revision.project.name} - ${revision.revisionName} - Schedule`
-    }
-    window.print()
+    const qs = searchParams.toString()
+    window.location.href = `/api/projects/${projectId}/schedule/${revisionId}/pdf${qs ? `?${qs}` : ''}`
   }
 
   const scheduleData = useMemo(() => {
