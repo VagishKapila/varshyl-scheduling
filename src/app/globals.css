@@ -110,3 +110,13 @@ body.pdfmode {
 .gantt-bar-teal    { background: var(--teal); }
 .gantt-bar-purple  { background: var(--purple); }
 .gantt-bar-black   { background: var(--black); height: 4px; margin-top: 3px; }
+
+@media screen {
+  body.pdfmode .gantt-toolbar,
+  body.pdfmode [class*="toolbar"],
+  body.pdfmode header,
+  body.pdfmode nav,
+  body.pdfmode .print-hidden {
+    display: none !important;
+  }
+}

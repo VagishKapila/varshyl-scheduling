@@ -231,6 +231,13 @@ export default function GanttPage() {
   const [dragBlockIds, setDragBlockIds] = useState<string[]>([])
   const [dragOverId, setDragOverId] = useState<string | null>(null)
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('pdfmode') === 'true') {
+      document.body.classList.add('pdfmode')
+    }
+  }, [])
+
   async function loadRevision() {
     const res = await fetch(`/api/revisions/${revisionId}`)
     const d = await res.json()
@@ -248,12 +255,6 @@ export default function GanttPage() {
     if (saved) {
       const w = Number(saved)
       if (!Number.isNaN(w)) setNameColWidth(Math.min(NAME_COL_MAX, Math.max(NAME_COL_MIN, w)))
-    }
-  }, [])
-
-  useEffect(() => {
-    if (new URLSearchParams(window.location.search).get('pdfmode') === 'true') {
-      document.body.classList.add('pdfmode')
     }
   }, [])
 

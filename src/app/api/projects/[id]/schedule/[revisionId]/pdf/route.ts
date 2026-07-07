@@ -60,8 +60,9 @@ export async function GET(
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
-  const baseUrl = `http://localhost:${process.env.PORT ?? 8080}`
-  const printUrl = `${baseUrl}/projects/${id}/schedule/${revisionId}?pdfmode=true`
+  const port = process.env.PORT ?? 8080
+  const baseUrl = `http://localhost:${port}`
+  const gantUrl = `${baseUrl}/projects/${id}/schedule/${revisionId}?pdfmode=true`
 
   try {
     chromium.setGraphicsMode = false
@@ -89,10 +90,11 @@ export async function GET(
         }
       }
 
-      await page.goto(printUrl, { waitUntil: 'networkidle0', timeout: 30_000 })
-      await page.waitForSelector('.gantt-bar', { timeout: 10_000 })
+      await page.setViewport({ width: 1600, height: 900, deviceScaleFactor: 1 })
+      await page.goto(gantUrl, { waitUntil: 'networkidle0', timeout: 30_000 })
 
-      await page.setViewport({ width: 1600, height: 900 })
+      await page.waitForSelector('[class*="gantt"]', { timeout: 15_000 })
+      await new Promise(resolve => setTimeout(resolve, 2000))
 
       const pdf = await page.pdf({
         format: 'A3',
