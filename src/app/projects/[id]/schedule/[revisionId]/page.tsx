@@ -2,167 +2,14 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { format, addDays, differenceInCalendarDays, startOfWeek, startOfMonth, startOfQuarter, startOfYear } from 'date-fns'
+import { format, addDays } from 'date-fns'
 import { parseDate, fmt, fmtInput, calcFinish } from '@/lib/dates'
+import { GanttChart, GanttLegend } from '@/components/GanttChart'
+import { SCALE_CONFIG, NAME_COL_DEFAULT, NAME_COL_MAX, NAME_COL_MIN, NAME_COL_STORAGE, COLOR_MAP } from '@/lib/gantt/constants'
+import { buildRenderOrder, computeDisplayNumbers, getDragBlock, reorderTaskList, sortTasks } from '@/lib/gantt/utils'
+import type { GanttTask } from '@/lib/gantt/types'
 
-const COLOR_MAP: Record<string, string> = {
-  blue: '#2458ff', red: '#d71920', green: '#138a36',
-  teal: '#168c9a', purple: '#7a3cff', black: '#111111',
-}
-
-const SCALE_CONFIG: Record<string, {
-  colPx: number
-  stepDays: number
-  alignStart: (d: Date) => Date
-  formatLabel: (d: Date) => string
-}> = {
-  daily: { colPx: 28, stepDays: 1, alignStart: d => d, formatLabel: d => format(d, 'EEE MMM d') },
-  weekly: { colPx: 10, stepDays: 7, alignStart: startOfWeek, formatLabel: d => `Week of ${format(d, 'MMM d')}` },
-  '2-week': { colPx: 6, stepDays: 14, alignStart: d => d, formatLabel: d => format(d, 'MMM d') },
-  monthly: { colPx: 3, stepDays: 30, alignStart: startOfMonth, formatLabel: d => format(d, 'MMMM yyyy') },
-  quarterly: { colPx: 2, stepDays: 90, alignStart: startOfQuarter, formatLabel: d => `Q${Math.floor(d.getMonth() / 3) + 1} ${format(d, 'yyyy')}` },
-  yearly: { colPx: 1, stepDays: 365, alignStart: startOfYear, formatLabel: d => format(d, 'yyyy') },
-}
-
-const NAME_COL_STORAGE = 'gantt-name-col-width'
-const NAME_COL_MIN = 180
-const NAME_COL_MAX = 400
-const NAME_COL_DEFAULT = 220
-const DRAG_COL = 20
-const ROW_H = 32
-const LEFT_FIXED_COLS = DRAG_COL + 28 + 48 + 76 + 76 + 72 // grip, #, days, start, finish, party
-
-function sortTasks(tasks: Task[]): Task[] {
-  return [...tasks].sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id))
-}
-
-/** Parent → children → next parent (tree order for display). */
-function buildRenderOrder(tasks: Task[]): Task[] {
-  const byParent = new Map<string | null, Task[]>()
-  for (const t of tasks) {
-    const key = t.parentTaskId ?? null
-    if (!byParent.has(key)) byParent.set(key, [])
-    byParent.get(key)!.push(t)
-  }
-  for (const list of byParent.values()) {
-    list.sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id))
-  }
-  const result: Task[] = []
-  const placed = new Set<string>()
-  function appendWithChildren(task: Task) {
-    result.push(task)
-    placed.add(task.id)
-    for (const child of byParent.get(task.id) ?? []) {
-      appendWithChildren(child)
-    }
-  }
-  for (const root of byParent.get(null) ?? []) {
-    appendWithChildren(root)
-  }
-  for (const t of sortTasks(tasks)) {
-    if (!placed.has(t.id)) result.push(t)
-  }
-  return result
-}
-
-function taskNestingDepth(task: Task, tasks: Task[]): number {
-  const byId = new Map(tasks.map(t => [t.id, t]))
-  let depth = 0
-  let cur: string | null = task.parentTaskId
-  while (cur) {
-    depth++
-    cur = byId.get(cur)?.parentTaskId ?? null
-  }
-  return depth
-}
-
-function computeDisplayNumbers(rendered: Task[]): Map<string, string> {
-  const map = new Map<string, string>()
-  const childCounts = new Map<string, number>()
-  let rootNum = 0
-  for (const t of rendered) {
-    if (!t.parentTaskId) {
-      rootNum++
-      map.set(t.id, String(rootNum))
-    } else {
-      const parentNum = map.get(t.parentTaskId)
-      if (!parentNum) {
-        rootNum++
-        map.set(t.id, String(rootNum))
-        continue
-      }
-      const cnt = (childCounts.get(t.parentTaskId) || 0) + 1
-      childCounts.set(t.parentTaskId, cnt)
-      map.set(t.id, `${parentNum}.${cnt}`)
-    }
-  }
-  return map
-}
-
-function hasChildren(tasks: Task[], taskId: string): boolean {
-  return tasks.some(t => t.parentTaskId === taskId)
-}
-
-function getBarDates(task: Task, tasks: Task[]): { start: Date; finish: Date } {
-  if (hasChildren(tasks, task.id)) {
-    const children = tasks.filter(t => t.parentTaskId === task.id)
-    return {
-      start: new Date(Math.min(...children.map(c => parseDate(c.startDate).getTime()))),
-      finish: new Date(Math.max(...children.map(c => parseDate(c.finishDate).getTime()))),
-    }
-  }
-  return { start: parseDate(task.startDate), finish: parseDate(task.finishDate) }
-}
-
-function dayOffsetFrom(date: Date | string, ganttStart: Date) {
-  return differenceInCalendarDays(parseDate(date), ganttStart)
-}
-
-function getTaskBarGeometry(
-  task: Task, rowIndex: number, tasks: Task[], colPx: number, ganttStart: Date,
-) {
-  const barDates = getBarDates(task, tasks)
-  const startOff = dayOffsetFrom(barDates.start, ganttStart) * colPx
-  const dur = Math.max(1, differenceInCalendarDays(barDates.finish, barDates.start) + 1)
-  const barW = task.isMilestone || task.relationshipType === 'Milestone' ? 10 : dur * colPx - 4
-  const y = rowIndex * ROW_H + ROW_H / 2
-  const left = startOff + 2
-  const right = startOff + 2 + Math.max(barW, 4)
-  const isMil = task.isMilestone || task.relationshipType === 'Milestone'
-  return { y, left, right, isMilestone: isMil }
-}
-
-function elbowPath(x1: number, y1: number, x2: number, y2: number): string {
-  const midX = x1 + Math.sign(x2 - x1) * Math.max(12, Math.abs(x2 - x1) / 2)
-  return `M ${x1} ${y1} H ${midX} V ${y2} H ${x2}`
-}
-
-function getDragBlock(tasks: Task[], taskId: string): string[] {
-  const rendered = buildRenderOrder(tasks)
-  const block = [taskId]
-  function collectChildren(parentId: string) {
-    for (const child of rendered.filter(t => t.parentTaskId === parentId)) {
-      block.push(child.id)
-      collectChildren(child.id)
-    }
-  }
-  if (rendered.some(t => t.parentTaskId === taskId)) {
-    collectChildren(taskId)
-  }
-  return block
-}
-
-function reorderTaskList(tasks: Task[], blockIds: string[], targetId: string): string[] {
-  const sorted = sortTasks(tasks)
-  const blockSet = new Set(blockIds)
-  const blockTasks = sorted.filter(t => blockSet.has(t.id))
-  const remaining = sorted.filter(t => !blockSet.has(t.id))
-  const targetIdx = remaining.findIndex(t => t.id === targetId)
-  const insertAt = targetIdx >= 0 ? targetIdx : remaining.length
-  return [...remaining.slice(0, insertAt), ...blockTasks, ...remaining.slice(insertAt)].map(t => t.id)
-}
-
-function getPredecessorLabel(task: Task, allTasks: Task[]): string {
+function getPredecessorLabel(task: GanttTask, allTasks: GanttTask[]): string {
   if (task.parentTaskId) {
     const parent = allTasks.find(t => t.id === task.parentTaskId)
     return parent ? `${parent.name} → ${task.name}` : task.name
@@ -170,7 +17,7 @@ function getPredecessorLabel(task: Task, allTasks: Task[]): string {
   return task.name
 }
 
-function buildPredecessorOptions(tasks: Task[], excludeId: string) {
+function buildPredecessorOptions(tasks: GanttTask[], excludeId: string) {
   const pool = tasks.filter(t => t.id !== excludeId)
   const poolIds = new Set(pool.map(t => t.id))
   const ordered = buildRenderOrder(pool)
@@ -201,14 +48,7 @@ function buildPredecessorOptions(tasks: Task[], excludeId: string) {
   return elements
 }
 
-interface Task {
-  id: string; sortOrder: number; level: number; name: string
-  durationDays: number; startDate: string; finishDate: string
-  color: string; responsibleParty: string|null; notes: string|null
-  isPermitRelated: boolean; isCritical: boolean; isMilestone: boolean
-  predecessorTaskId: string|null; relationshipType: string; lagDays: number
-  parentTaskId: string|null
-}
+type Task = GanttTask
 
 export default function GanttPage() {
   const params = useParams()
@@ -281,32 +121,9 @@ export default function GanttPage() {
     window.addEventListener('mouseup', onUp)
   }
 
-  const sortedTasks = sortTasks(tasks)
   const renderedTasks = buildRenderOrder(tasks)
   const displayNumbers = computeDisplayNumbers(renderedTasks)
-  const leftPanelWidth = LEFT_FIXED_COLS + nameColWidth
-
-  const scaleConfig = SCALE_CONFIG[scale] || SCALE_CONFIG.weekly
-  const COL_PX = scaleConfig.colPx
-
   const today = new Date()
-  const minDate = tasks.length ? new Date(Math.min(...tasks.map(t => parseDate(t.startDate).getTime()))) : today
-  const maxDate = tasks.length ? new Date(Math.max(...tasks.map(t => parseDate(t.finishDate).getTime()))) : addDays(today, 90)
-  const ganttStart = startOfWeek(addDays(minDate, -7))
-  const ganttEnd = addDays(maxDate, 30)
-  const totalDays = differenceInCalendarDays(ganttEnd, ganttStart)
-
-  function dayOffset(date: Date | string) {
-    return differenceInCalendarDays(parseDate(date), ganttStart)
-  }
-
-  // Build date header ticks for current scale
-  const ticks: Date[] = []
-  let tickCur = scaleConfig.alignStart(new Date(ganttStart))
-  while (tickCur <= ganttEnd) {
-    ticks.push(new Date(tickCur))
-    tickCur = addDays(tickCur, scaleConfig.stepDays)
-  }
 
   async function saveTask(id: string, data: Partial<Task>) {
     const payload: Partial<Task> = { ...data }
@@ -420,42 +237,6 @@ export default function GanttPage() {
     }
   }
 
-  const rowIndexById = new Map(renderedTasks.map((t, i) => [t.id, i]))
-  const parentIds = new Set(tasks.filter(t => t.parentTaskId).map(t => t.parentTaskId!))
-  const ganttWidth = totalDays * COL_PX
-  const ganttHeight = renderedTasks.length * ROW_H
-
-  const dependencyLines = renderedTasks.flatMap(task => {
-    if (!task.predecessorTaskId || task.relationshipType === 'Manual') return []
-    const predIdx = rowIndexById.get(task.predecessorTaskId)
-    const succIdx = rowIndexById.get(task.id)
-    if (predIdx === undefined || succIdx === undefined) return []
-    const pred = renderedTasks[predIdx]
-    const predGeo = getTaskBarGeometry(pred, predIdx, renderedTasks, COL_PX, ganttStart)
-    const succGeo = getTaskBarGeometry(task, succIdx, renderedTasks, COL_PX, ganttStart)
-    const rel = task.relationshipType || 'FS'
-    let x1: number, x2: number
-    if (rel === 'SS') { x1 = predGeo.left; x2 = succGeo.left }
-    else if (rel === 'FF') { x1 = predGeo.right; x2 = succGeo.right }
-    else if (rel === 'SF') { x1 = predGeo.left; x2 = succGeo.right }
-    else { x1 = predGeo.right; x2 = succGeo.left }
-    const y1 = predGeo.y
-    const y2 = succGeo.y
-    const d = elbowPath(x1, y1, x2, y2)
-    const pointingRight = x2 >= x1
-    const ax = x2
-    const ay = y2
-    const arrow = pointingRight
-      ? `${ax},${ay} ${ax - 5},${ay - 3} ${ax - 5},${ay + 3}`
-      : `${ax},${ay} ${ax + 5},${ay - 3} ${ax + 5},${ay + 3}`
-    return [(
-      <g key={`dep-${task.id}`}>
-        <path d={d} fill="none" stroke="#94a3b8" strokeWidth={1.5} />
-        <polygon points={arrow} fill="#94a3b8" />
-      </g>
-    )]
-  })
-
   if (loading) return <div className="min-h-screen bg-gray-50 flex items-center justify-center text-gray-400">Loading schedule…</div>
 
   const project = revision?.project
@@ -532,228 +313,24 @@ export default function GanttPage() {
         </div>
       </header>
 
-      {/* Legend */}
-      <div className="px-4 py-2 flex gap-4 flex-wrap text-xs border-b border-gray-100 no-print bg-gray-50">
-        {[
-          { color:'#2458ff', label:'Construction Tasks' },
-          { color:'#d71920', label:'Inspections / Holds / City' },
-          { color:'#138a36', label:'Owner / Client' },
-          { color:'#168c9a', label:'Contingency / Delay' },
-          { color:'#7a3cff', label:'Procurement' },
-          { color:'#111', label:'Phase Summary' },
-        ].map(l => (
-          <div key={l.label} className="flex items-center gap-1.5">
-            <div className="w-2.5 h-2.5 rounded-full" style={{background:l.color}} />
-            <span className="text-gray-600">{l.label}</span>
-          </div>
-        ))}
-        <div className="flex items-center gap-1.5">
-          <div className="w-3 h-3 rotate-45 inline-block" style={{background:'#111'}} />
-          <span className="text-gray-600">Milestone</span>
-        </div>
-      </div>
+      <GanttLegend />
 
-      {/* Gantt table */}
-      <div className="flex-1 overflow-auto">
-        <div style={{minWidth: leftPanelWidth + totalDays * COL_PX}}>
-          {/* Header row with dates */}
-          <div className="flex sticky top-0 z-10 bg-gray-50 border-b border-gray-200" style={{height:40}}>
-            <div className="flex-shrink-0 border-r border-gray-200 relative" style={{width: leftPanelWidth}}>
-              <div className="grid text-xs font-semibold text-gray-500 uppercase tracking-wide px-3 h-full items-center"
-                style={{gridTemplateColumns:`${DRAG_COL}px 28px ${nameColWidth}px 48px 76px 76px 72px`}}>
-                <span />
-                <span>#</span>
-                <span className="relative pr-2">
-                  Task Name
-                  <div
-                    role="separator"
-                    aria-orientation="vertical"
-                    onMouseDown={onResizeStart}
-                    className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-orange-300/60 active:bg-orange-400/80"
-                  />
-                </span>
-                <span>Days</span><span>Start</span><span>Finish</span><span>Party</span>
-              </div>
-            </div>
-            {/* Date ticks */}
-            <div className="relative flex-1" style={{height:40}}>
-              {ticks.map((tick, i) => (
-                <div key={`${scale}-${i}`} className="absolute text-xs text-gray-400 font-medium whitespace-nowrap" style={{left: dayOffset(tick) * COL_PX + 2, top: 12}}>
-                  {scaleConfig.formatLabel(tick)}
-                </div>
-              ))}
-              {/* Today line */}
-              <div className="absolute top-0 bottom-0 w-0.5 z-10" style={{left: dayOffset(today) * COL_PX, background:'#f15a24'}} />
-            </div>
-          </div>
-
-          {/* Task rows + dependency overlay */}
-          <div className="relative">
-            <svg
-              className="absolute pointer-events-none no-print"
-              style={{ left: leftPanelWidth, top: 0, width: ganttWidth, height: ganttHeight, zIndex: 10 }}
-              aria-hidden
-            >
-              {dependencyLines}
-            </svg>
-
-          {renderedTasks.map((task, rowIndex) => {
-            const isParent = parentIds.has(task.id)
-            const isPhase = !task.parentTaskId && isParent
-            const isChild = Boolean(task.parentTaskId)
-            const barDates = getBarDates(task, tasks)
-            const startOff = dayOffset(barDates.start) * COL_PX
-            const dur = Math.max(1, differenceInCalendarDays(barDates.finish, barDates.start) + 1)
-            const isMil = task.isMilestone || task.relationshipType === 'Milestone'
-            const barW = isMil ? 10 : dur * COL_PX - 4
-            const barColor = COLOR_MAP[task.color] || '#2458ff'
-            const indentPx = taskNestingDepth(task, tasks) * 22
-            const displayNum = displayNumbers.get(task.id) || '—'
-            const isDragging = dragBlockIds.includes(task.id)
-            const isDragOver = dragOverId === task.id
-
-            return (
-              <div key={task.id}
-                className={`group gantt-row flex border-b border-gray-100 cursor-pointer ${
-                  isPhase ? 'gantt-row-phase font-bold' :
-                  isParent ? 'bg-blue-50 font-semibold text-blue-900 hover:bg-blue-100' :
-                  isChild ? 'bg-white text-gray-700 hover:bg-blue-50/30' :
-                  'hover:bg-blue-50/30'
-                } ${task.isCritical ? 'ring-inset ring-1 ring-red-200' : ''} ${isDragging ? 'opacity-50' : ''} ${isDragOver ? 'bg-orange-50' : ''}`}
-                style={{height: ROW_H}}
-                onDragOver={e => { e.preventDefault(); setDragOverId(task.id) }}
-                onDragLeave={() => setDragOverId(id => id === task.id ? null : id)}
-                onDrop={e => { e.preventDefault(); e.stopPropagation(); handleDrop(task.id) }}
-                onClick={() => openTaskDrawer(task.id)}>
-                {/* Left table */}
-                <div className={`flex-shrink-0 border-r border-gray-200 flex items-center px-2 gantt-left-panel ${
-                  isPhase ? 'bg-gray-900 text-white hover:bg-gray-800' : ''
-                }`}
-                  style={{width: leftPanelWidth}}>
-                  <div className="grid items-center gap-1 w-full text-xs"
-                    style={{gridTemplateColumns:`${DRAG_COL - 4}px 24px ${nameColWidth}px 44px 76px 76px 72px`}}>
-                    <span
-                      draggable
-                      onDragStart={e => { e.stopPropagation(); handleDragStart(task.id); e.dataTransfer.effectAllowed = 'move' }}
-                      onDragEnd={() => { setDragBlockIds([]); setDragOverId(null) }}
-                      className="cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 select-none text-center no-print"
-                      title="Drag to reorder"
-                      onClick={e => e.stopPropagation()}
-                    >⠿</span>
-                    <span className="text-gray-400">{displayNum}</span>
-                    <span className={`flex items-center gap-1 min-w-0 ${
-                      isPhase ? 'font-bold text-white' :
-                      isParent ? 'font-semibold text-blue-900' :
-                      'font-medium text-gray-800'
-                    }`}
-                      style={{ paddingLeft: isChild ? indentPx + 8 : indentPx }}>
-                      {isMil && <span className="shrink-0" style={{color:barColor}}>◆</span>}
-                      <span className="task-name truncate flex-1">{task.name}</span>
-                      <span className="shrink-0 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity no-print">
-                        <button
-                          type="button"
-                          onClick={e => { e.stopPropagation(); copyTask(task.id) }}
-                          className="px-1.5 py-0.5 text-[10px] font-semibold text-orange-600 border border-orange-200 rounded hover:bg-orange-50"
-                        >Copy</button>
-                        <button
-                          type="button"
-                          onClick={e => { e.stopPropagation(); deleteTask(task.id) }}
-                          className="px-1.5 py-0.5 text-[10px] font-semibold text-red-600 border border-red-200 rounded hover:bg-red-50"
-                        >Delete</button>
-                      </span>
-                    </span>
-                    <span className={isPhase ? 'text-gray-300 text-center' : 'text-gray-500 text-center'}>{task.durationDays}d</span>
-                    <span className={isPhase ? 'text-gray-300' : 'text-gray-500'}>{fmt(barDates.start)}</span>
-                    <span className={isPhase ? 'text-gray-300' : 'text-gray-500'}>{fmt(barDates.finish)}</span>
-                    <span className={isPhase ? 'text-gray-400 truncate' : 'text-gray-400 truncate'}>{task.responsibleParty || ''}</span>
-                  </div>
-                </div>
-
-                {/* Gantt bar */}
-                <div
-                  className={`relative flex-shrink-0 ${isPhase ? 'bg-white' : ''}`}
-                  style={{ height: ROW_H, width: ganttWidth, zIndex: 2 }}
-                >
-                  {ticks.map((tick, wi) => (
-                    <div key={`grid-${scale}-${wi}`} className="absolute top-0 bottom-0 w-px bg-gray-100"
-                      style={{left: dayOffset(tick) * COL_PX}} />
-                  ))}
-                  {/* Today line */}
-                  <div className="absolute top-0 bottom-0 w-0.5" style={{left: dayOffset(today) * COL_PX, background:'#f15a24', opacity:0.4}} />
-
-                  {isMil ? (
-                    <div className="absolute" style={{
-                      left: startOff + 5, top: 10,
-                      width: 12, height: 12,
-                      background: barColor,
-                      transform: 'rotate(45deg)',
-                    }} />
-                  ) : isPhase ? (
-                    <div className="absolute rounded flex items-center overflow-hidden gantt-bar"
-                      style={{
-                        left: startOff + 2,
-                        top: 10,
-                        width: Math.max(barW, 4),
-                        height: 12,
-                        background: '#111',
-                      }}>
-                      {barW >= 60 && (
-                        <span className="px-1 text-[10px] font-semibold text-white truncate block w-full" style={{ textOverflow: 'ellipsis', overflow: 'hidden' }}>{task.name}</span>
-                      )}
-                    </div>
-                  ) : isParent ? (
-                    <div className="absolute rounded flex items-center overflow-hidden gantt-bar"
-                      style={{
-                        left: startOff + 2,
-                        top: 11,
-                        width: Math.max(barW, 4),
-                        height: 10,
-                        background: '#2458ff',
-                        opacity: 0.9,
-                      }}>
-                      {barW >= 60 && (
-                        <span className="px-1 text-[10px] font-semibold text-white truncate block w-full" style={{ textOverflow: 'ellipsis', overflow: 'hidden' }}>{task.name}</span>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="absolute rounded flex items-center overflow-hidden gantt-bar"
-                      style={{
-                        left: startOff + 2,
-                        top: 12,
-                        width: Math.max(barW, 4),
-                        height: 8,
-                        background: barColor,
-                        opacity: task.isCritical ? 1 : 0.85,
-                      }}>
-                      {barW >= 60 && (
-                        <span className="px-1 text-[10px] font-semibold text-white truncate block w-full" style={{ textOverflow: 'ellipsis', overflow: 'hidden' }}>{task.name}</span>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )
-          })}
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div key={`empty-${i}`} className="gantt-row gantt-row-empty flex border-b border-gray-100" style={{ height: ROW_H }}>
-              <div className="flex-shrink-0 border-r border-gray-200 flex items-center px-2" style={{ width: leftPanelWidth }}>
-                <div className="grid items-center gap-1 w-full text-xs text-gray-300"
-                  style={{ gridTemplateColumns: `${DRAG_COL - 4}px 24px ${nameColWidth}px 44px 76px 76px 72px` }}>
-                  <span />
-                  <span className="text-center">{renderedTasks.length + i + 1}</span>
-                  <span />
-                  <span />
-                  <span />
-                  <span />
-                  <span />
-                </div>
-              </div>
-              <div className="flex-1" />
-            </div>
-          ))}
-          </div>
-        </div>
-      </div>
+      <GanttChart
+        tasks={tasks}
+        scale={scale}
+        nameColWidth={nameColWidth}
+        onResizeStart={onResizeStart}
+        dragBlockIds={dragBlockIds}
+        dragOverId={dragOverId}
+        onDragStart={handleDragStart}
+        onDragOver={id => setDragOverId(id)}
+        onDragLeave={id => setDragOverId(cur => cur === id ? null : cur)}
+        onDrop={handleDrop}
+        onTaskClick={openTaskDrawer}
+        onCopyTask={copyTask}
+        onDeleteTask={deleteTask}
+        onDragEnd={() => { setDragBlockIds([]); setDragOverId(null) }}
+      />
 
       {/* Print footer */}
       <div className="print-only px-6 py-3 border-t border-gray-900 flex justify-between text-xs text-gray-600 mt-2">
