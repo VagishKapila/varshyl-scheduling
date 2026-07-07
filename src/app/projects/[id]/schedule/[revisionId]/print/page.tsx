@@ -28,6 +28,8 @@ interface BarPosition {
   rowIndex: number
   startCol: number
   endCol: number
+  leftX: number
+  rightX: number
   predecessorTaskId: string | null
   relationshipType: string
 }
@@ -42,27 +44,30 @@ type FsConnection = {
   succName: string
 }
 
-function barRightX(bp: BarPosition): number {
-  return bp.endCol * CHART_COL_W - 4
+function getBarBounds(start: Date, finish: Date, chartStart: Date) {
+  const startCol = Math.max(0, Math.floor((start.getTime() - chartStart.getTime()) / MS_PER_WEEK))
+  const endWeek = Math.ceil((finish.getTime() - chartStart.getTime()) / MS_PER_WEEK)
+  const widthWeeks = Math.max(1, endWeek - startCol)
+  const leftX = startCol * CHART_COL_W + 2
+  const rightX = leftX + widthWeeks * CHART_COL_W - 4
+  return { startCol, endCol: startCol + widthWeeks, leftX, rightX }
 }
 
-function barLeftX(bp: BarPosition): number {
-  return bp.startCol * CHART_COL_W + 4
+function barCenterY(rowIndex: number): number {
+  return rowIndex * ROW_H + ROW_H / 2
 }
 
-function barCenterY(bp: BarPosition): number {
-  return bp.rowIndex * ROW_H + ROW_H / 2
-}
-
-function buildBarPositions(tasks: TaskRow[], chartStart: Date, totalWeeks: number): BarPosition[] {
+function buildBarPositions(tasks: TaskRow[], chartStart: Date): BarPosition[] {
   return tasks.map((task, rowIndex) => {
     const barDates = getBarDates(task, tasks)
-    const { startCol, endCol } = getTaskColumns(barDates.start, barDates.finish, chartStart, totalWeeks)
+    const { startCol, endCol, leftX, rightX } = getBarBounds(barDates.start, barDates.finish, chartStart)
     return {
       taskId: task.id,
       rowIndex,
       startCol,
       endCol,
+      leftX,
+      rightX,
       predecessorTaskId: task.predecessorTaskId,
       relationshipType: task.relationshipType,
     }
@@ -82,10 +87,10 @@ function buildFsConnections(barPositions: BarPosition[], tasks: TaskRow[]): FsCo
     )
     .map(bp => {
       const pred = barPosMap[bp.predecessorTaskId!]
-      const x1 = barRightX(pred)
-      const y1 = barCenterY(pred)
-      const x2 = barLeftX(bp)
-      const y2 = barCenterY(bp)
+      const x1 = pred.rightX
+      const y1 = barCenterY(pred.rowIndex)
+      const x2 = bp.leftX
+      const y2 = barCenterY(bp.rowIndex)
       const jog = x1 + 10
       const path = `M ${x1} ${y1} H ${jog} V ${y2} H ${x2}`
       return {
@@ -98,19 +103,11 @@ function buildFsConnections(barPositions: BarPosition[], tasks: TaskRow[]): FsCo
         succName: taskMap.get(bp.taskId)?.name ?? bp.taskId,
       }
     })
+    .filter(c => c.x1 > 0 && c.x2 > c.x1 && c.y2 > c.y1)
 
-  if (connections.length > 0) {
-    const c = connections[0]
-    console.log('[print FS connector]', {
-      pred: c.predName,
-      barRightX: c.x1,
-      predCenterY: c.y1,
-      succ: c.succName,
-      barLeftX: c.x2,
-      succCenterY: c.y2,
-      path: c.path,
-    })
-  }
+  connections.slice(0, 3).forEach(c => {
+    console.log('[print FS connector]', c.predName, c.x1, c.y1, c.succName, c.x2, c.y2, c.path)
+  })
 
   return connections
 }
@@ -204,11 +201,10 @@ function getTaskColumns(
   chartStart: Date,
   totalWeeks: number,
 ): { startCol: number; endCol: number } {
-  const startCol = Math.floor((start.getTime() - chartStart.getTime()) / MS_PER_WEEK)
-  const endCol = Math.ceil((finish.getTime() - chartStart.getTime()) / MS_PER_WEEK) + 1
+  const { startCol, endCol } = getBarBounds(start, finish, chartStart)
   return {
-    startCol: Math.max(0, startCol),
-    endCol: Math.min(totalWeeks, Math.max(endCol, startCol + 1)),
+    startCol,
+    endCol: Math.min(totalWeeks, endCol),
   }
 }
 
@@ -231,7 +227,7 @@ function buildWeekColumns(tasks: TaskRow[]) {
   const minDate = new Date(Math.min(...allStarts.map(d => d.getTime())))
   const maxDate = new Date(Math.max(...allFinishes.map(d => d.getTime())))
 
-  const chartStart = startOfWeek(addDays(minDate, -7), { weekStartsOn: 1 })
+  const chartStart = startOfWeek(minDate, { weekStartsOn: 1 })
   const chartEnd = addDays(maxDate, 21)
 
   const weeks: Date[] = []
@@ -349,7 +345,7 @@ export default function PrintPage() {
     const parentIds = new Set(tasks.filter(t => t.parentTaskId).map(t => t.parentTaskId!))
     const { weeks, chartStart } = buildWeekColumns(tasks)
     const totalWeeks = weeks.length
-    const barPositions = buildBarPositions(tasks, chartStart, totalWeeks)
+    const barPositions = buildBarPositions(tasks, chartStart)
     const fsConnections = buildFsConnections(barPositions, tasks)
     return { tasks, parentIds, weeks, chartStart, totalWeeks, fsConnections, today: startOfDay(new Date()) }
   }, [revision])
