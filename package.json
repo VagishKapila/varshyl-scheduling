@@ -7,12 +7,13 @@
     "build": "prisma generate && next build",
     "start": "prisma db push --accept-data-loss && next start",
     "lint": "next lint",
-    "postinstall": "prisma generate && npx puppeteer browsers install chrome"
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
+    "@sparticuz/chromium": "^149.0.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/pg": "^8.20.0",
     "bcryptjs": "^3.0.3",
@@ -21,7 +22,7 @@
     "next-auth": "^4.24.14",
     "pg": "^8.22.0",
     "prisma": "^7.8.0",
-    "puppeteer": "^25.3.0",
+    "puppeteer-core": "^25.3.0",
     "react": "^18",
     "react-dom": "^18",
     "react-hook-form": "^7.80.0",

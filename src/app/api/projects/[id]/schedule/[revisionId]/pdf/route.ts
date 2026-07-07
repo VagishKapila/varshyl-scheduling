@@ -48,71 +48,81 @@ export async function GET(
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
-  const baseUrl = process.env.NEXTAUTH_URL ?? 'http://localhost:3000'
+  const baseUrl = `http://localhost:${process.env.PORT ?? 8080}`
   const printUrl = `${baseUrl}/projects/${id}/schedule/${revisionId}?pdfmode=true`
 
-  let puppeteer: typeof import('puppeteer')
   try {
-    puppeteer = await import('puppeteer')
-  } catch {
+    const puppeteer = await import('puppeteer-core')
+    const chromium = await import('@sparticuz/chromium')
+
+    chromium.default.setGraphicsMode = false
+
+    const executablePath =
+      process.env.PUPPETEER_EXECUTABLE_PATH ??
+      process.env.CHROME_BIN ??
+      await chromium.default.executablePath()
+
+    const browser = await puppeteer.default.launch({
+      args: [
+        ...chromium.default.args,
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-zygote',
+        '--single-process',
+        '--disable-extensions',
+      ],
+      executablePath,
+      headless: true,
+    })
+
+    try {
+      const page = await browser.newPage()
+
+      const cookieHeader = req.headers.get('cookie') ?? ''
+      if (cookieHeader) {
+        const cookies = parseRequestCookies(cookieHeader, baseUrl)
+        if (cookies.length > 0) {
+          await page.setCookie(...cookies)
+        }
+      }
+
+      await page.goto(printUrl, { waitUntil: 'networkidle0', timeout: 30_000 })
+      await page.waitForSelector('.gantt-bar', { timeout: 10_000 })
+
+      await page.setViewport({ width: 1600, height: 900 })
+
+      const pdf = await page.pdf({
+        format: 'A3',
+        landscape: true,
+        printBackground: true,
+        margin: { top: '0.3in', right: '0.2in', bottom: '0.3in', left: '0.2in' },
+      })
+
+      const safeName = (revision.project?.name ?? 'schedule')
+        .replace(/[^a-zA-Z0-9-_]+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 60) || 'schedule'
+
+      return new NextResponse(Buffer.from(pdf), {
+        headers: {
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': `attachment; filename="${safeName}-${revisionId}.pdf"`,
+        },
+      })
+    } finally {
+      await browser.close().catch(() => {})
+    }
+  } catch (err) {
+    console.error('[PDF ERROR]', err)
     return NextResponse.json(
-      { error: 'PDF generation requires puppeteer with Chromium.' },
+      {
+        error: 'Failed to generate PDF',
+        detail: err instanceof Error ? err.message : String(err),
+      },
       { status: 500 },
     )
-  }
-
-  const executablePath =
-    process.env.PUPPETEER_EXECUTABLE_PATH ?? process.env.CHROME_BIN ?? undefined
-
-  const browser = await puppeteer.launch({
-    headless: true,
-    ...(executablePath ? { executablePath } : {}),
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-    ],
-  })
-
-  try {
-    const page = await browser.newPage()
-
-    const cookieHeader = req.headers.get('cookie') ?? ''
-    if (cookieHeader) {
-      const cookies = parseRequestCookies(cookieHeader, baseUrl)
-      if (cookies.length > 0) {
-        await page.setCookie(...cookies)
-      }
-    }
-
-    await page.goto(printUrl, { waitUntil: 'networkidle0', timeout: 30_000 })
-    await page.waitForSelector('.gantt-bar', { timeout: 10_000 })
-
-    await page.setViewport({ width: 1600, height: 900 })
-
-    const pdf = await page.pdf({
-      format: 'A3',
-      landscape: true,
-      printBackground: true,
-      margin: { top: '0.3in', right: '0.2in', bottom: '0.3in', left: '0.2in' },
-    })
-
-    const safeName = (revision.project?.name ?? 'schedule')
-      .replace(/[^a-zA-Z0-9-_]+/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 60) || 'schedule'
-
-    return new NextResponse(Buffer.from(pdf), {
-      headers: {
-        'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="${safeName}-${revisionId}.pdf"`,
-      },
-    })
-  } catch (e) {
-    console.error('[schedule-pdf]', e)
-    return NextResponse.json({ error: 'Failed to generate PDF' }, { status: 500 })
-  } finally {
-    await browser.close()
   }
 }
