@@ -32,7 +32,7 @@ ENV PORT=8080
 
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci
+RUN npm install
 COPY . .
 RUN npm run build
 RUN npm prune --omit=dev
